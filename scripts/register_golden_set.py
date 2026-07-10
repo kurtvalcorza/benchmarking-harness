@@ -37,9 +37,27 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--class", dest="model_class", choices=list(DEFAULTS), required=True)
     p.add_argument("--api", default="http://localhost:8000")
-    p.add_argument("--data", help="path to a conforming dataset dir (default: owned sample)")
+    p.add_argument(
+        "--data",
+        help="dataset dir AS SEEN BY THE API/WORKER (with docker compose that is a "
+        "container path, e.g. /srv/data/benchmarks/open-images-det-sample or "
+        "/srv/samples/golden/det-golden). Default: the owned sample at its local path.",
+    )
+    p.add_argument(
+        "--license",
+        dest="license_",
+        default=None,
+        help="dataset license; REQUIRED with --data (e.g. cc-by-4.0 for Open Images). "
+        "The built-in synthetic samples are 'owned'.",
+    )
     p.add_argument("--version", default="v1")
     args = p.parse_args()
+
+    if args.data and not args.license_:
+        p.error(
+            "--license is required when registering non-sample data — record the REAL "
+            "license of the fetched dataset (Constitution II), e.g. --license cc-by-4.0"
+        )
 
     cfg = DEFAULTS[args.model_class]
     manifest = {
@@ -50,10 +68,10 @@ def main() -> int:
         "conditions": ["rain", "low_light", "fog"],
         "safety_critical": cfg["safety_critical"],
         "recall_floors": cfg["recall_floors"],
-        "license": "owned",
+        "license": args.license_ or "owned",
         "is_public": False,
         "domain": "local-context-demo",
-        "data_ref": str(Path(args.data).resolve() if args.data else cfg["data"]),
+        "data_ref": args.data if args.data else str(cfg["data"]),
     }
     req = urllib.request.Request(
         f"{args.api}/golden-sets",

@@ -7,6 +7,7 @@ safety-critical classes against their floors. A floor breach on ANY condition
 (clean included) flags the run for human adjudication (FR-012a).
 """
 
+import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,7 +57,12 @@ def run_tier2(
     primary = threshold.metric if threshold else None
     clean_score: float | None = None
 
-    with tempfile.TemporaryDirectory(prefix="harness-perturb-") as tmp:
+    # perturbed copies must be daemon-visible when the sandbox runs via a host
+    # docker daemon — same workdir contract as engine.sandbox.runner
+    workdir = os.environ.get("HARNESS_SANDBOX_WORKDIR")
+    if workdir:
+        Path(workdir).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="harness-perturb-", dir=workdir or None) as tmp:
         for cond in ordered:
             if cond is Condition.clean:
                 cond_root = golden.root

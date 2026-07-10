@@ -288,6 +288,22 @@ def _regenerate_card(
                     "trigger": adj.trigger,
                 }
             )
+    if sandbox_mode is None and latest:
+        # regeneration outside the run (e.g. adjudication decision): recover
+        # the recorded isolation mode from the persisted evidence rather than
+        # downgrading the card to `to be confirmed`
+        for tr in session.exec(select(TierResult).where(TierResult.run_id == latest.id)).all():
+            try:
+                evidence = json.loads(Path(tr.evidence_ref).read_text())
+                sandbox_mode = (evidence.get("evidence") or {}).get("sandbox_mode")
+            except (OSError, json.JSONDecodeError):
+                continue
+            if sandbox_mode:
+                break
+    golden_name = None
+    if latest and latest.golden_set_id:
+        gs = session.get(GoldenTestSet, latest.golden_set_id)
+        golden_name = gs.name if gs else latest.golden_set_id
     existing = session.exec(
         select(ModelCard).where(ModelCard.model_version_id == version_id)
     ).first()
@@ -299,7 +315,7 @@ def _regenerate_card(
         sandbox_mode=sandbox_mode,
         golden_set=(
             {
-                "name": latest.golden_set_id,
+                "name": golden_name,
                 "version": latest.golden_set_version,
                 "checksum": latest.golden_set_checksum,
             }
@@ -342,33 +358,48 @@ def _regenerate_card(
 
 def reevaluate_for_golden_set(golden_set: GoldenTestSet) -> list[str]:
     """FR-004/T059: a golden-set update flags previously evaluated versions of
-    the same class for re-evaluation and re-enqueues them."""
+    the same class for re-evaluation and re-enqueues them. Also rescues
+    versions of this class stuck `pending` after a no-golden-set infra run —
+    the first registration for a class must pick those up."""
     flagged: list[str] = []
     with Session(get_engine()) as session:
-        prior_sets = session.exec(
-            select(GoldenTestSet).where(
-                GoldenTestSet.model_class == golden_set.model_class,
-                GoldenTestSet.id != golden_set.id,
-            )
-        ).all()
-        prior_ids = {s.id for s in prior_sets}
-        if not prior_ids:
-            return flagged
-        runs = session.exec(select(EvaluationRun)).all()
-        version_ids = {r.model_version_id for r in runs if r.golden_set_id in prior_ids}
-        for vid in version_ids:
-            version = session.get(ModelVersion, vid)
-            if version and version.status in (ModelStatus.approved, ModelStatus.rejected):
-                # status stays put until the re-run starts (approved → evaluating
-                # is a legal transition); the audit event records the flag
-                audit.record(
-                    session,
-                    actor="orchestrator",
-                    action="re-evaluation-flagged:golden-set-update",
-                    target_ref=f"model_version:{vid}",
-                    checksum=golden_set.checksum,
+        prior_ids = {
+            s.id
+            for s in session.exec(
+                select(GoldenTestSet).where(
+                    GoldenTestSet.model_class == golden_set.model_class,
+                    GoldenTestSet.id != golden_set.id,
                 )
-                flagged.append(vid)
+            ).all()
+        }
+        runs = session.exec(select(EvaluationRun)).all()
+        reeval_ids = {r.model_version_id for r in runs if r.golden_set_id in prior_ids}
+        stuck_ids = {
+            r.model_version_id for r in runs if r.golden_set_id is None and not r.infra_ok
+        }
+        for vid in reeval_ids | stuck_ids:
+            version = session.get(ModelVersion, vid)
+            if version is None:
+                continue
+            model = session.get(Model, version.model_id)
+            if model is None or model.model_class != golden_set.model_class:
+                continue
+            eligible = (
+                vid in reeval_ids
+                and version.status in (ModelStatus.approved, ModelStatus.rejected)
+            ) or (vid in stuck_ids and version.status is ModelStatus.pending)
+            if not eligible:
+                continue
+            # status stays put until the re-run starts (approved/pending →
+            # evaluating are legal transitions); the audit event records the flag
+            audit.record(
+                session,
+                actor="orchestrator",
+                action="re-evaluation-flagged:golden-set-update",
+                target_ref=f"model_version:{vid}",
+                checksum=golden_set.checksum,
+            )
+            flagged.append(vid)
         session.commit()
     for vid in flagged:
         enqueue_evaluation(vid)

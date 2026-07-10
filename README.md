@@ -51,7 +51,9 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 Full stack (API + RQ worker + Redis + Docker sandbox): `docker compose up -d`,
 then fetch real permissive data with `python scripts/fetch_open_images.py --class detection --n 200`
-and register it via `python scripts/register_golden_set.py --class detection --data data/benchmarks/open-images-det-sample`.
+and register it via
+`python scripts/register_golden_set.py --class detection --data /srv/data/benchmarks/open-images-det-sample --license cc-by-4.0`
+(dataset paths are the API/worker's view — `./data` is mounted at `/srv/data`, the baked-in samples at `/srv/samples`).
 Evaluating real `.pt`/`.onnx` weights needs the ML extra: `pip install -e "backend[ml]"`.
 
 ## Tests & constitution gates

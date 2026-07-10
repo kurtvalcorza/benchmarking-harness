@@ -1,5 +1,15 @@
-# T004 — api + worker + redis. The worker mounts the docker socket so the
-# sandbox runner can launch ephemeral --network none containers (D1).
+# T004 — api + worker + redis.
+#
+# State/data live in BIND MOUNTS (./.state, ./data), not named volumes, because
+# the worker launches sandbox containers via the HOST docker daemon
+# (/var/run/docker.sock): the daemon resolves bind-mount sources on the host,
+# so every path the sandbox needs must exist on the host and be translated via
+# HARNESS_HOSTPATH_MAP (see engine/sandbox/runner.py::_host_path).
+#
+# Register datasets with CONTAINER paths, e.g.:
+#   python scripts/seed_demo.py --data-ref /srv/samples/golden/det-golden
+#   python scripts/register_golden_set.py --class detection \
+#     --data /srv/data/benchmarks/open-images-det-sample --license cc-by-4.0
 services:
   api:
     build:
@@ -7,14 +17,15 @@ services:
       dockerfile: docker/api.Dockerfile
     ports:
       - "8000:8000"
-    environment:
+    environment: &harness-env
       HARNESS_REDIS_URL: redis://redis:6379/0
       HARNESS_DATABASE_URL: sqlite:////srv/state/harness.db
-      HARNESS_DATA_DIR: /srv/state/data
+      HARNESS_DATA_DIR: /srv/data
       HARNESS_ARTIFACTS_DIR: /srv/state/artifacts
       HARNESS_RESULTS_DIR: /srv/state/results
     volumes:
-      - harness-state:/srv/state
+      - ./.state:/srv/state
+      - ./data:/srv/data
     depends_on:
       - redis
 
@@ -24,14 +35,16 @@ services:
       dockerfile: docker/api.Dockerfile
     command: ["python", "-m", "worker.main"]
     environment:
-      HARNESS_REDIS_URL: redis://redis:6379/0
-      HARNESS_DATABASE_URL: sqlite:////srv/state/harness.db
-      HARNESS_DATA_DIR: /srv/state/data
-      HARNESS_ARTIFACTS_DIR: /srv/state/artifacts
-      HARNESS_RESULTS_DIR: /srv/state/results
+      <<: *harness-env
+      # explicit docker mode: fail loudly (infra_ok=false) if the daemon is
+      # unusable instead of silently downgrading to the subprocess fallback
+      HARNESS_SANDBOX_MODE: docker
       HARNESS_SANDBOX_IMAGE: benchmarking-harness-sandbox:latest
+      HARNESS_SANDBOX_WORKDIR: /srv/state/sandbox
+      HARNESS_HOSTPATH_MAP: "/srv/backend=${PWD}/backend;/srv/state=${PWD}/.state;/srv/data=${PWD}/data;/srv/samples=${PWD}/samples"
     volumes:
-      - harness-state:/srv/state
+      - ./.state:/srv/state
+      - ./data:/srv/data
       - /var/run/docker.sock:/var/run/docker.sock  # sandbox containers (no-egress)
     depends_on:
       - redis
@@ -40,6 +53,3 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-
-volumes:
-  harness-state:

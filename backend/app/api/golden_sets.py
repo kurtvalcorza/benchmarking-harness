@@ -51,25 +51,31 @@ def register_golden_set(
     if dup:
         raise HTTPException(422, f"golden set '{manifest.name}' {manifest.version} already registered")
 
+    if not manifest.data_ref:
+        # Tier 2 reads the set from data_ref at evaluation time; registering
+        # without one would turn every run for this class into an infra
+        # failure. Require it until a remote data source exists.
+        raise HTTPException(
+            422,
+            "data_ref is required: fetch the dataset locally (scripts/fetch_*) and register "
+            "the path the API/worker can read",
+        )
+    # POC trust boundary: data_ref is a server-side path supplied by the
+    # governance operator (the API has no auth yet — spec assumption OQ-5).
+    # Before production: authenticate this endpoint and confine data_ref
+    # to a configured dataset root so callers can't probe arbitrary paths.
+    data_path = Path(manifest.data_ref)
+    if not (data_path / "annotations.json").exists():
+        raise HTTPException(422, f"data_ref '{manifest.data_ref}' is not a conforming dataset")
+    computed = Dataset(root=data_path).checksum()
     checksum = manifest.checksum
-    if manifest.data_ref:
-        # POC trust boundary: data_ref is a server-side path supplied by the
-        # governance operator (the API has no auth yet — spec assumption OQ-5).
-        # Before production: authenticate this endpoint and confine data_ref
-        # to a configured dataset root so callers can't probe arbitrary paths.
-        data_path = Path(manifest.data_ref)
-        if not (data_path / "annotations.json").exists():
-            raise HTTPException(422, f"data_ref '{manifest.data_ref}' is not a conforming dataset")
-        computed = Dataset(root=data_path).checksum()
-        if checksum == "auto":
-            checksum = computed
-        elif checksum != computed:
-            raise HTTPException(
-                422,
-                "manifest checksum does not match the data content (contamination guard, FR-018)",
-            )
-    elif checksum == "auto":
-        raise HTTPException(422, "checksum 'auto' requires data_ref")
+    if checksum == "auto":
+        checksum = computed
+    elif checksum != computed:
+        raise HTTPException(
+            422,
+            "manifest checksum does not match the data content (contamination guard, FR-018)",
+        )
 
     gs = GoldenTestSet(
         name=manifest.name,

@@ -1,6 +1,7 @@
 """Submitter surface: register/upload, status + card, history (T032/T033/T054)."""
 
 import os
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -19,6 +20,7 @@ from app.services import audit
 from app.services.orchestrator import enqueue_evaluation
 from engine.adapters.base import SUPPORTED_FRAMEWORKS
 from engine.datasets import REPO_ROOT
+from engine.metrics import SCORED_CLASSES
 from engine.registry.registry import REGISTRY
 
 router = APIRouter(tags=["models"])
@@ -44,6 +46,14 @@ async def submit_model(
         raise HTTPException(422, f"unknown model_class '{model_class}'") from None
     if mc not in REGISTRY:
         raise HTTPException(422, f"no benchmark registered for class '{mc.value}' (FR-006)")
+    if mc not in SCORED_CLASSES:
+        # registered slot, scorer not yet implemented (FR-025): refuse up front
+        # with a clear message instead of failing mid-evaluation as infra
+        raise HTTPException(
+            422,
+            f"model class '{mc.value}' is registered but its scorer is not implemented in "
+            f"the POC — supported end-to-end: {sorted(c.value for c in SCORED_CLASSES)}",
+        )
     if framework.lower() not in SUPPORTED_FRAMEWORKS:
         raise HTTPException(
             422, f"unsupported framework '{framework}' (supported: {SUPPORTED_FRAMEWORKS})"
@@ -74,9 +84,14 @@ async def submit_model(
     session.add(mv)
     session.flush()
 
-    dest = artifacts_dir() / mv.id
+    dest = (artifacts_dir() / mv.id).resolve()
     dest.mkdir(parents=True, exist_ok=True)
-    artifact_path = dest / (weights.filename or "weights.bin")
+    # the filename is client-controlled: strip any path components so an
+    # upload named "../../x" can never escape the version's artifact dir
+    safe_name = Path(weights.filename or "").name or "weights.bin"
+    artifact_path = (dest / safe_name).resolve()
+    if not artifact_path.is_relative_to(dest):
+        raise HTTPException(422, "invalid weights filename")
     artifact_path.write_bytes(await weights.read())
     mv.artifact_ref = str(artifact_path)
     session.add(mv)
@@ -89,7 +104,22 @@ async def submit_model(
     session.commit()
     session.refresh(mv)
 
-    enqueue_evaluation(mv.id)  # FR-003: auto-trigger, no manual step
+    try:
+        enqueue_evaluation(mv.id)  # FR-003: auto-trigger, no manual step
+    except Exception as e:
+        # nothing ran yet → roll the submission back so a retry with the same
+        # name/version doesn't trip the duplicate check while no job exists
+        has_runs = session.exec(
+            select(EvaluationRun).where(EvaluationRun.model_version_id == mv.id)
+        ).first()
+        if has_runs is None:
+            session.delete(mv)
+            session.commit()
+            shutil.rmtree(dest, ignore_errors=True)
+            raise HTTPException(
+                503, f"evaluation queue unavailable; submission rolled back — retry ({e})"
+            ) from e
+        raise
     session.refresh(mv)
     return _version_out(session, mv)
 

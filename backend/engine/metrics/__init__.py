@@ -7,6 +7,10 @@ from engine.adapters.base import Prediction
 from engine.metrics.classification import evaluate_classification
 from engine.metrics.detection import evaluate_detection
 
+# Classes with an implemented scorer. The submission API refuses the other
+# registered classes up front (clear 422) instead of infra-failing mid-run.
+SCORED_CLASSES = {ModelClass.detection, ModelClass.classification}
+
 
 def evaluate(
     model_class: ModelClass,

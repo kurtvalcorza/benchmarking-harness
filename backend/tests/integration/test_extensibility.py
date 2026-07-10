@@ -45,6 +45,13 @@ def test_restrictive_license_rejected(client):
     assert r.status_code == 422
 
 
+def test_missing_data_ref_rejected(client):
+    """A set the worker can't read would infra-fail every run for the class."""
+    r = client.post("/golden-sets", json=det_manifest(data_ref="", checksum="whatever"))
+    assert r.status_code == 422
+    assert "data_ref" in r.text
+
+
 def test_checksum_mismatch_rejected(client):
     r = client.post("/golden-sets", json=det_manifest(checksum="not-the-real-hash"))
     assert r.status_code == 422

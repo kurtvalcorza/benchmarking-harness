@@ -79,13 +79,46 @@ def run_inference(
     *, framework: str, artifact: str, model_class: str, dataset_root: str
 ) -> JobResult:
     mode = sandbox_mode()
-    with tempfile.TemporaryDirectory(prefix="harness-sandbox-") as tmp:
+    # HARNESS_SANDBOX_WORKDIR: where per-run out dirs are created. Needed when
+    # the worker runs in a container and the docker daemon resolves bind mounts
+    # on the host — point it at a directory covered by HARNESS_HOSTPATH_MAP.
+    workdir = os.environ.get("HARNESS_SANDBOX_WORKDIR")
+    if workdir:
+        Path(workdir).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="harness-sandbox-", dir=workdir or None) as tmp:
         out_dir = Path(tmp)
         if mode == "docker":
             raw = _run_docker(framework, artifact, model_class, dataset_root, out_dir)
         else:
             raw = _run_subprocess(framework, artifact, model_class, dataset_root, out_dir)
     return JobResult(ok=bool(raw.get("ok")), sandbox_mode=mode, raw=raw)
+
+
+def _hostpath_pairs() -> list[tuple[str, str]]:
+    """HARNESS_HOSTPATH_MAP='/container/path=/host/path;...' — longest prefix wins."""
+    pairs = []
+    for entry in os.environ.get("HARNESS_HOSTPATH_MAP", "").split(";"):
+        if "=" in entry:
+            cont, host = entry.split("=", 1)
+            if cont.strip() and host.strip():
+                pairs.append((cont.strip().rstrip("/"), host.strip().rstrip("/")))
+    return sorted(pairs, key=lambda p: -len(p[0]))
+
+
+def _host_path(path: str) -> str:
+    """Translate a container-local path to the daemon-visible host path.
+
+    When the worker itself runs inside a container and talks to the host's
+    docker daemon over /var/run/docker.sock, bind-mount SOURCES are resolved
+    by the daemon on the HOST — container paths like /srv/state/... don't
+    exist there. HARNESS_HOSTPATH_MAP declares the translation (see
+    docker-compose.yml). Without the env var this is the identity function.
+    """
+    s = str(Path(path).resolve())
+    for cont, host in _hostpath_pairs():
+        if s == cont or s.startswith(cont + "/"):
+            return host + s[len(cont):]
+    return s
 
 
 def docker_container_config(
@@ -105,10 +138,10 @@ def docker_container_config(
         "network_mode": "none",
         "read_only": True,  # read-only root fs
         "volumes": {
-            str(BACKEND_ROOT): {"bind": "/srv/backend", "mode": "ro"},
-            str(Path(artifact).resolve()): {"bind": "/mnt/artifact", "mode": "ro"},
-            str(Path(dataset_root).resolve()): {"bind": "/mnt/dataset", "mode": "ro"},
-            str(out_dir): {"bind": "/mnt/out", "mode": "rw"},
+            _host_path(str(BACKEND_ROOT)): {"bind": "/srv/backend", "mode": "ro"},
+            _host_path(artifact): {"bind": "/mnt/artifact", "mode": "ro"},
+            _host_path(dataset_root): {"bind": "/mnt/dataset", "mode": "ro"},
+            _host_path(str(out_dir)): {"bind": "/mnt/out", "mode": "rw"},
         },
         "tmpfs": {"/tmp": "rw,size=256m"},
         "working_dir": "/srv/backend",
@@ -139,10 +172,16 @@ def _run_docker(
     }
     (out_dir / "spec.json").write_text(json.dumps(spec))
     cfg = docker_container_config(framework, artifact, model_class, dataset_root, out_dir)
-    client = docker.from_env()
-    container = client.containers.run(**cfg)
     try:
-        status = container.wait(timeout=TIMEOUT_S)
+        client = docker.from_env()
+        container = client.containers.run(**cfg)
+    except Exception as e:  # daemon unreachable / image missing / bad config
+        raise SandboxError(f"docker sandbox failed to start: {e}") from e
+    try:
+        try:
+            status = container.wait(timeout=TIMEOUT_S)
+        except Exception as e:  # timeout or daemon error mid-run → infra, not a model fail
+            raise SandboxError(f"sandbox job timed out or died: {e}") from e
         if status.get("StatusCode", 1) not in (0, 3):
             logs = container.logs().decode(errors="replace")[-2000:]
             raise SandboxError(f"sandbox job exited {status}: {logs}")
@@ -171,13 +210,16 @@ def _run_subprocess(
         "HARNESS_SANDBOX_GUARD": "1",
         "PYTHONPATH": str(BACKEND_ROOT),
     }
-    proc = subprocess.run(
-        [sys.executable, "-m", "engine.sandbox.job", "--spec", str(spec_path)],
-        cwd=str(BACKEND_ROOT),
-        env=env,
-        capture_output=True,
-        timeout=TIMEOUT_S,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "engine.sandbox.job", "--spec", str(spec_path)],
+            cwd=str(BACKEND_ROOT),
+            env=env,
+            capture_output=True,
+            timeout=TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:  # infra failure, never a model `fail`
+        raise SandboxError(f"sandbox job timed out after {TIMEOUT_S}s") from e
     if proc.returncode not in (0, 3):
         raise SandboxError(
             f"sandbox job exited {proc.returncode}: {proc.stderr.decode(errors='replace')[-2000:]}"

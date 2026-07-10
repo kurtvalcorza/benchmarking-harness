@@ -66,6 +66,12 @@ def post_multipart(url: str, fields: dict[str, list[str] | str], file_path: Path
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--api", default="http://localhost:8000")
+    p.add_argument(
+        "--data-ref",
+        default=str(REPO / "samples" / "golden" / "det-golden"),
+        help="golden-set dir AS SEEN BY THE API/WORKER; with docker compose pass "
+        "/srv/samples/golden/det-golden (samples are baked into the image)",
+    )
     args = p.parse_args()
 
     golden = post_json(
@@ -81,7 +87,7 @@ def main() -> int:
             "license": "owned",
             "is_public": False,
             "domain": "local-context-demo",
-            "data_ref": str(REPO / "samples" / "golden" / "det-golden"),
+            "data_ref": args.data_ref,
         },
     )
     print(f"golden set registered: {golden['id']} checksum {golden['checksum'][:12]}…")

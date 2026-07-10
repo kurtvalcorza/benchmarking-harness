@@ -103,6 +103,10 @@ def main() -> int:
     args = p.parse_args()
 
     out = REPO / "data" / "benchmarks" / CLASS_TO_BENCH[args.model_class]
+    if out.exists():
+        # a stale, larger previous fetch would contaminate images/ and the
+        # checksum (FR-018) — always start from a clean slate
+        shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
     if args.synthetic:
         fetch_synthetic(args.model_class, out)
