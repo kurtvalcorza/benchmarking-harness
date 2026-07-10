@@ -22,16 +22,47 @@ from pathlib import Path
 
 
 def _install_socket_guard() -> None:
-    """Subprocess-fallback egress guard: refuse any non-loopback connect."""
-    real_connect = socket.socket.connect
+    """Subprocess-fallback egress guard: refuse any non-loopback destination.
 
-    def guarded(self, address):  # noqa: ANN001
+    Covers connect/connect_ex (TCP and connected UDP) AND the connectionless
+    paths (sendto/sendmsg), so UDP-based egress such as DNS tunneling is
+    blocked too — the docker path blocks all of this at the network-namespace
+    level; this fallback must not be weaker than it has to be.
+    """
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+    real_sendto = socket.socket.sendto
+    real_sendmsg = socket.socket.sendmsg
+
+    def _check(address):  # noqa: ANN001
         host = address[0] if isinstance(address, tuple) else str(address)
         if host not in ("127.0.0.1", "::1", "localhost"):
-            raise OSError(f"sandbox egress blocked: connect to {host!r} denied")
+            raise OSError(f"sandbox egress blocked: destination {host!r} denied")
+
+    def guarded_connect(self, address):  # noqa: ANN001
+        _check(address)
         return real_connect(self, address)
 
-    socket.socket.connect = guarded  # type: ignore[method-assign]
+    def guarded_connect_ex(self, address):  # noqa: ANN001
+        _check(address)
+        return real_connect_ex(self, address)
+
+    def guarded_sendto(self, data, *args):  # noqa: ANN001
+        # sendto(bytes, address) or sendto(bytes, flags, address)
+        if args:
+            _check(args[-1])
+        return real_sendto(self, data, *args)
+
+    def guarded_sendmsg(self, *args, **kwargs):  # noqa: ANN001
+        # sendmsg(buffers[, ancdata[, flags[, address]]])
+        if len(args) >= 4 and args[3] is not None:
+            _check(args[3])
+        return real_sendmsg(self, *args, **kwargs)
+
+    socket.socket.connect = guarded_connect  # type: ignore[method-assign]
+    socket.socket.connect_ex = guarded_connect_ex  # type: ignore[method-assign]
+    socket.socket.sendto = guarded_sendto  # type: ignore[method-assign]
+    socket.socket.sendmsg = guarded_sendmsg  # type: ignore[method-assign]
 
 
 def assert_no_egress(timeout: float = 2.0) -> None:

@@ -53,6 +53,10 @@ def register_golden_set(
 
     checksum = manifest.checksum
     if manifest.data_ref:
+        # POC trust boundary: data_ref is a server-side path supplied by the
+        # governance operator (the API has no auth yet — spec assumption OQ-5).
+        # Before production: authenticate this endpoint and confine data_ref
+        # to a configured dataset root so callers can't probe arbitrary paths.
         data_path = Path(manifest.data_ref)
         if not (data_path / "annotations.json").exists():
             raise HTTPException(422, f"data_ref '{manifest.data_ref}' is not a conforming dataset")

@@ -92,7 +92,12 @@ def docker_container_config(
     framework: str, artifact: str, model_class: str, dataset_root: str, out_dir: Path
 ) -> dict:
     """The exact hardening config handed to docker (unit-testable without a
-    daemon; reviewed by T065 / asserted by tests/contract/test_sandbox_no_egress.py)."""
+    daemon; reviewed by T065 / asserted by tests/contract/test_sandbox_no_egress.py).
+
+    CI has no docker service, so this config is asserted as data but not
+    exercised against a live daemon there — validate on a docker host before
+    relying on the docker path in production (the runtime no-egress assertion
+    in engine.sandbox.job is the independent backstop either way)."""
     return {
         "image": DOCKER_IMAGE,
         "command": ["python", "-m", "engine.sandbox.job", "--spec", "/mnt/out/spec.json"],

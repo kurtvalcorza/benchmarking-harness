@@ -147,9 +147,11 @@ def evaluate_version(version_id: str) -> str | None:
                 else:
                     outcomes.extend(t2.outcomes)
                     safety_breach = t2.safety_breach
-                    hard_fail = t2.passed is False and not (
-                        t2.safety_breach or t2.unratified
-                    )
+                    # FR-007: any condition below its RATIFIED threshold halts
+                    # progression, even when another condition independently
+                    # raised an unratified/safety flag — the flags still route
+                    # the final verdict to adjudication via score_run.
+                    hard_fail = t2.passed is False
                     if not hard_fail:
                         # ---- Tier 3: interpretability + resource profile ----
                         t3 = run_tier3(

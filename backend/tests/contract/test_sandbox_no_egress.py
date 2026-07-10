@@ -86,6 +86,33 @@ def test_subprocess_guard_blocks_egress(tmp_path):
     assert "BLOCKED" in proc.stdout
 
 
+def test_subprocess_guard_blocks_udp_egress(tmp_path):
+    """Connectionless UDP (sendto — e.g. DNS tunneling) is blocked too; only
+    loopback datagrams are allowed."""
+    probe = tmp_path / "probe_udp.py"
+    probe.write_text(
+        "import socket, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from engine.sandbox.job import _install_socket_guard\n"
+        "_install_socket_guard()\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "try:\n"
+        "    s.sendto(b'exfil', ('8.8.8.8', 53))\n"
+        "except OSError as e:\n"
+        "    print('BLOCKED', e)\n"
+        "else:\n"
+        "    sys.exit(1)\n"
+        "s.sendto(b'ok', ('127.0.0.1', 9))  # loopback still permitted\n"
+        "print('LOOPBACK_OK')\n"
+        "sys.exit(0)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, str(probe), str(BACKEND)], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, f"UDP egress was NOT blocked: {proc.stdout}{proc.stderr}"
+    assert "BLOCKED" in proc.stdout and "LOOPBACK_OK" in proc.stdout
+
+
 def test_live_sandboxed_inference_asserts_no_egress(tmp_path, monkeypatch):
     """End-to-end: a real inference job through the runner records that the
     no-egress assertion ran."""
