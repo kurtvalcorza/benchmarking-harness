@@ -44,3 +44,7 @@ def test_flagged_to_pending_to_reject_flow(client):
     assert detail["status"] == "rejected"
     card = detail["card_markdown"]
     assert "reject" in card and "adjudicator@example.com" in card  # FR-013 on the record
+    # regeneration after the decision must recover the recorded isolation
+    # evidence, not downgrade it (conftest runs the subprocess sandbox)
+    assert "sandbox: subprocess" in card
+    assert "sandbox: to be confirmed" not in card
