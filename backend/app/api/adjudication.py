@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.api.schemas import AdjudicationItemOut, DecisionIn
-from app.db.enums import ModelStatus, Verdict
+from app.db.enums import Decision, ModelStatus, Tier, Verdict
 from app.db.models import (
     AdjudicationRecord,
     EvaluationRun,
@@ -65,6 +65,21 @@ def decide(
         or version.status is not ModelStatus.pending_adjudication
     ):
         raise HTTPException(409, "run is not pending adjudication")
+
+    if body.decision is Decision.approve:
+        # data-model validation rule: `approved` requires a stored TierResult
+        # for EVERY tier. A halted run (e.g. Tier 1 failed + provenance flag)
+        # lacks the operational-safety lineage and cannot be approved.
+        tiers_present = {
+            t.tier for t in session.exec(select(TierResult).where(TierResult.run_id == run.id))
+        }
+        missing = [t.value for t in Tier if t not in tiers_present]
+        if missing:
+            raise HTTPException(
+                409,
+                f"cannot approve: run lacks results for tiers {missing} — the full "
+                "three-tier lineage is required for approval (reject or request changes)",
+            )
 
     record = AdjudicationRecord(
         run_id=run.id,

@@ -7,6 +7,7 @@ are enforced at the repository layer (repositories.py), not here.
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from app.db.enums import Condition, Decision, ModelClass, ModelStatus, Tier, Verdict
@@ -28,6 +29,10 @@ class Model(SQLModel, table=True):
 
 
 class ModelVersion(SQLModel, table=True):
+    # DB-level guarantee: version identity survives concurrent submissions
+    # (the API's read-before-insert check alone is racy)
+    __table_args__ = (UniqueConstraint("model_id", "version"),)
+
     id: str = Field(default_factory=_uuid, primary_key=True)
     model_id: str = Field(foreign_key="model.id", index=True)
     version: str

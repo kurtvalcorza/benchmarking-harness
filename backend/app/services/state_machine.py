@@ -20,7 +20,11 @@ _TRANSITIONS: dict[ModelStatus, set[ModelStatus]] = {
         ModelStatus.pending_adjudication,
         ModelStatus.pending,  # infra failure → back to pending (never a model `fail`)
     },
-    ModelStatus.pending_adjudication: {ModelStatus.approved, ModelStatus.rejected},
+    ModelStatus.pending_adjudication: {
+        ModelStatus.approved,  # ONLY via apply_adjudication (recorded decision)
+        ModelStatus.rejected,
+        ModelStatus.evaluating,  # golden-set update re-evaluates a stale flagged case (FR-004)
+    },
     # golden-set update (FR-004) re-flags for re-evaluation:
     ModelStatus.approved: {ModelStatus.evaluating},
     ModelStatus.rejected: {ModelStatus.evaluating},

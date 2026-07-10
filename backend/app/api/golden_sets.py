@@ -16,7 +16,7 @@ from app.db.models import GoldenTestSet
 from app.db.repositories import get_session
 from app.services import audit
 from app.services.orchestrator import reevaluate_for_golden_set
-from engine.datasets import Dataset
+from engine.datasets import Dataset, validate_dataset
 
 router = APIRouter(tags=["golden-sets"])
 
@@ -65,8 +65,11 @@ def register_golden_set(
     # Before production: authenticate this endpoint and confine data_ref
     # to a configured dataset root so callers can't probe arbitrary paths.
     data_path = Path(manifest.data_ref)
-    if not (data_path / "annotations.json").exists():
-        raise HTTPException(422, f"data_ref '{manifest.data_ref}' is not a conforming dataset")
+    problems = validate_dataset(data_path)
+    if problems:
+        raise HTTPException(
+            422, f"data_ref '{manifest.data_ref}' is not a conforming dataset: {problems}"
+        )
     computed = Dataset(root=data_path).checksum()
     checksum = manifest.checksum
     if checksum == "auto":

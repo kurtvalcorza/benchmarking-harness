@@ -75,10 +75,28 @@ def _docker_available() -> bool:
         return False
 
 
+# Frameworks whose adapters execute ONLY code from this repository. Untrusted
+# weights (pytorch pickles, onnx graphs) may spawn child processes or use
+# native networking that the subprocess mode's Python-level socket guard
+# cannot see — those frameworks REQUIRE the docker sandbox (fail closed).
+_SUBPROCESS_SAFE_FRAMEWORKS = {"stub"}
+
+
 def run_inference(
     *, framework: str, artifact: str, model_class: str, dataset_root: str
 ) -> JobResult:
     mode = sandbox_mode()
+    if (
+        mode == "subprocess"
+        and framework not in _SUBPROCESS_SAFE_FRAMEWORKS
+        and os.environ.get("HARNESS_ALLOW_UNSANDBOXED_FRAMEWORKS") != "1"
+    ):
+        raise SandboxError(
+            f"the subprocess sandbox only guards Python-level sockets and cannot contain "
+            f"untrusted '{framework}' weights (child processes / native networking bypass "
+            f"it) — run a docker daemon for real models, or set "
+            f"HARNESS_ALLOW_UNSANDBOXED_FRAMEWORKS=1 for trusted local development only"
+        )
     # HARNESS_SANDBOX_WORKDIR: where per-run out dirs are created. Needed when
     # the worker runs in a container and the docker daemon resolves bind mounts
     # on the host — point it at a directory covered by HARNESS_HOSTPATH_MAP.

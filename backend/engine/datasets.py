@@ -69,6 +69,47 @@ class DatasetNotFound(FileNotFoundError):
     pass
 
 
+def validate_dataset(root: Path) -> list[str]:
+    """Structural validation for a dataset dir (used at golden-set
+    registration, FR-020): returns human-readable problems, empty when
+    conforming. Catching malformed data HERE keeps a bad registration from
+    crashing every later evaluation of its class."""
+    problems: list[str] = []
+    ann_path = root / "annotations.json"
+    if not ann_path.exists():
+        return [f"missing {ann_path.name}"]
+    try:
+        ann = json.loads(ann_path.read_text())
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return [f"annotations.json is not valid JSON: {e}"]
+    if not isinstance(ann, dict):
+        return ["annotations.json must map image id → list of objects"]
+    for img_id, objs in ann.items():
+        if not isinstance(objs, list):
+            problems.append(f"annotations[{img_id!r}] must be a list")
+            continue
+        for i, obj in enumerate(objs):
+            if not isinstance(obj, dict) or not isinstance(obj.get("label"), str):
+                problems.append(f"annotations[{img_id!r}][{i}] needs a string 'label'")
+                continue
+            bbox = obj.get("bbox")
+            if bbox is not None and not (
+                isinstance(bbox, list)
+                and len(bbox) == 4
+                and all(isinstance(v, (int, float)) for v in bbox)
+            ):
+                problems.append(f"annotations[{img_id!r}][{i}].bbox must be [x1,y1,x2,y2]")
+    ds = Dataset(root=root)
+    image_ids = {img.id for img in ds.images()} if (root / "images").is_dir() else set()
+    if not image_ids:
+        problems.append("images/ is missing or contains no images")
+    else:
+        orphaned = sorted(set(ann) - image_ids)[:5]
+        if orphaned:
+            problems.append(f"annotated ids with no image file: {orphaned}")
+    return problems
+
+
 def resolve(name_or_path: str) -> Dataset:
     """Resolve a dataset by absolute path, then $HARNESS_DATA_DIR/benchmarks/,
     then committed samples/benchmarks/ (owned/permissive stand-ins)."""

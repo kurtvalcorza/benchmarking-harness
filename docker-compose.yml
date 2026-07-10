@@ -11,6 +11,16 @@
 #   python scripts/register_golden_set.py --class detection \
 #     --data /srv/data/benchmarks/open-images-det-sample --license cc-by-4.0
 services:
+  # build-only service: gives `docker compose up/build` a reason to produce the
+  # sandbox image the worker launches evaluations in (it exits immediately)
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: docker/sandbox.Dockerfile
+    image: benchmarking-harness-sandbox:latest
+    command: ["python", "-c", "print('sandbox image built')"]
+    restart: "no"
+
   api:
     build:
       context: .
@@ -47,7 +57,10 @@ services:
       - ./data:/srv/data
       - /var/run/docker.sock:/var/run/docker.sock  # sandbox containers (no-egress)
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      sandbox-image:
+        condition: service_completed_successfully
 
   redis:
     image: redis:7-alpine

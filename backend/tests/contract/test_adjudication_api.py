@@ -75,6 +75,33 @@ def test_second_decision_is_409(client):
     )
     assert again.status_code == 409  # a decided run cannot be re-decided
 
+def test_approve_requires_complete_tier_lineage(client, tmp_path):
+    """A halted run (Tier 1 failed + provenance flag) lacks Tier 2/3 results —
+    approving it would admit a model without its operational-safety lineage."""
+    import json
+
+    hopeless = tmp_path / "hopeless.stub.json"
+    hopeless.write_text(json.dumps({"kind": "stub-model", "task": "detection", "skill": 0.05}))
+    register_golden(client, det_manifest())
+    mv = submit_model(client, weights_path=hopeless, name="halted-flagged")  # no provenance
+    assert mv["status"] == "pending_adjudication"
+    item = next(
+        q for q in client.get("/adjudication/queue").json() if q["model_version_id"] == mv["id"]
+    )
+    approve = client.post(
+        f"/adjudication/{item['run_id']}/decision",
+        json={"reviewer": "r", "decision": "approve", "rationale": "looks fine"},
+    )
+    assert approve.status_code == 409
+    assert "lineage" in approve.text
+    # reject remains available — the human can still close the case
+    reject = client.post(
+        f"/adjudication/{item['run_id']}/decision",
+        json={"reviewer": "r", "decision": "reject", "rationale": "tier 1 failure + no provenance"},
+    )
+    assert reject.status_code == 200
+
+
 def test_unknown_run_404(client):
     r = client.post(
         "/adjudication/nope/decision",

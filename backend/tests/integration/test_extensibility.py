@@ -58,6 +58,58 @@ def test_checksum_mismatch_rejected(client):
     assert "contamination" in r.text
 
 
+def test_malformed_dataset_rejected_at_registration(client, tmp_path):
+    """Broken annotations must be caught at registration, not crash Tier 2."""
+    bad = tmp_path / "bad-golden"
+    (bad / "images").mkdir(parents=True)
+    (bad / "annotations.json").write_text("{not json")
+    r = client.post("/golden-sets", json=det_manifest(data_ref=str(bad)))
+    assert r.status_code == 422
+    assert "not valid JSON" in r.text
+
+    (bad / "annotations.json").write_text('{"img_000": [{"bbox": [1, 2, 3, 4]}]}')
+    r = client.post("/golden-sets", json=det_manifest(data_ref=str(bad)))
+    assert r.status_code == 422  # missing label + no images
+
+
+def test_checksum_drift_blocks_evaluation(client, tmp_path):
+    """Data mutated after registration must never be scored under the old
+    checksum (FR-018) — the run records an infra failure instead."""
+    import shutil
+
+    from tests.conftest import DET_GOLDEN, HEALTHY_DET
+
+    drifting = tmp_path / "drifting-golden"
+    shutil.copytree(DET_GOLDEN, drifting)
+    register_golden(client, det_manifest(data_ref=str(drifting)))
+    # mutate the registered data on disk
+    victim = next((drifting / "images").glob("*.png"))
+    victim.write_bytes(victim.read_bytes() + b"tampered")
+
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="drift-victim", sources=["s"])
+    assert mv["status"] == "pending"  # infra failure, not a model verdict
+    runs = client.get(f"/models/{mv['id']}/history").json()
+    assert runs[-1]["infra_ok"] is False
+    assert "checksum" in runs[-1]["flag_trigger"]
+
+
+def test_pending_adjudication_reevaluated_on_golden_set_update(client):
+    """FR-004: a case still awaiting adjudication re-evaluates against the new
+    set so the reviewer never decides on stale evidence."""
+    from tests.conftest import WEAK_DET
+
+    register_golden(client, det_manifest())
+    mv = submit_model(client, weights_path=WEAK_DET, name="stale-flagged", sources=["s"])
+    assert mv["status"] == "pending_adjudication"
+    out = register_golden(client, det_manifest(version="v2"))
+    assert mv["id"] in out["reevaluation_flagged"]
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[1]["golden_set"]["version"] == "v2"
+    # still weak → flagged again, but now against current evidence
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "pending_adjudication"
+
+
 def test_golden_set_update_flags_reevaluation(client):
     """FR-004: models evaluated against v1 are re-flagged when v2 registers."""
     register_golden(client, det_manifest())

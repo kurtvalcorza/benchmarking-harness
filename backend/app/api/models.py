@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.schemas import (
@@ -92,7 +93,10 @@ async def submit_model(
     artifact_path = (dest / safe_name).resolve()
     if not artifact_path.is_relative_to(dest):
         raise HTTPException(422, "invalid weights filename")
-    artifact_path.write_bytes(await weights.read())
+    # stream to disk: real .pt/.onnx artifacts are large — never buffer the
+    # whole payload in API memory
+    with artifact_path.open("wb") as f:
+        shutil.copyfileobj(weights.file, f, length=1024 * 1024)
     mv.artifact_ref = str(artifact_path)
     session.add(mv)
     audit.record(
@@ -101,7 +105,16 @@ async def submit_model(
         action="model-version-submitted",
         target_ref=f"model_version:{mv.id}",
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # concurrent duplicate submission lost the race on the (model_id,
+        # version) unique constraint
+        session.rollback()
+        shutil.rmtree(dest, ignore_errors=True)
+        raise HTTPException(
+            422, f"version '{version}' already exists for model '{name}'"
+        ) from None
     session.refresh(mv)
 
     try:

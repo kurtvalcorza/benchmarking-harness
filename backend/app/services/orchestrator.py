@@ -34,7 +34,7 @@ from app.services import audit
 from app.services.config import get_threshold
 from app.services.state_machine import assert_transition, status_for_verdict
 from engine.cards import generator as cards
-from engine.datasets import REPO_ROOT
+from engine.datasets import REPO_ROOT, Dataset
 from engine.sandbox.runner import SandboxError
 from engine.scoring import score_run
 from engine.tiers.tier1_capability import TierOutcome, run_tier1
@@ -131,6 +131,14 @@ def evaluate_version(version_id: str) -> str | None:
                     f"no golden test set registered for class '{model_class.value}' "
                     "(register one via POST /golden-sets)"
                 )
+            elif Dataset(root=Path(golden.data_ref)).checksum() != golden.checksum:
+                # contamination guard (FR-018, Constitution IV): the data on
+                # disk drifted from what governance registered — never score
+                # against it and never stamp results with a stale checksum
+                infra_error = (
+                    f"golden set '{golden.id}' content no longer matches its registered "
+                    "checksum — refusing to evaluate against drifted data (re-register)"
+                )
             else:
                 t2 = run_tier2(
                     framework=framework,
@@ -165,6 +173,10 @@ def evaluate_version(version_id: str) -> str | None:
                             infra_error = t3.adapter_error
     except (SandboxError, NotImplementedError, FileNotFoundError) as e:
         infra_error = str(e)
+    except Exception as e:  # noqa: BLE001 — any unexpected crash is an infra
+        # failure: record it and return the version to `pending` rather than
+        # dying mid-`evaluating` with no append-only run (worker robustness)
+        infra_error = f"unexpected {type(e).__name__}: {e}"
 
     run.finished_at = utcnow()
 
@@ -386,7 +398,15 @@ def reevaluate_for_golden_set(golden_set: GoldenTestSet) -> list[str]:
                 continue
             eligible = (
                 vid in reeval_ids
-                and version.status in (ModelStatus.approved, ModelStatus.rejected)
+                and version.status
+                in (
+                    ModelStatus.approved,
+                    ModelStatus.rejected,
+                    # FR-004: a case still awaiting adjudication is re-evaluated
+                    # against the new set so the reviewer never decides on stale
+                    # evidence (pending_adjudication → evaluating is legal)
+                    ModelStatus.pending_adjudication,
+                )
             ) or (vid in stuck_ids and version.status is ModelStatus.pending)
             if not eligible:
                 continue
