@@ -1,0 +1,24 @@
+{
+  "activeFeature": "001-model-benchmarking-harness",
+  "featureDir": "specs/001-model-benchmarking-harness",
+  "spec": "specs/001-model-benchmarking-harness/spec.md",
+  "plan": "specs/001-model-benchmarking-harness/plan.md",
+  "research": "specs/001-model-benchmarking-harness/research.md",
+  "dataModel": "specs/001-model-benchmarking-harness/data-model.md",
+  "contracts": [
+    "specs/001-model-benchmarking-harness/contracts/openapi.yaml",
+    "specs/001-model-benchmarking-harness/contracts/inference-adapter.md"
+  ],
+  "quickstart": "specs/001-model-benchmarking-harness/quickstart.md",
+  "tasks": "specs/001-model-benchmarking-harness/tasks.md",
+  "checklists": ["specs/001-model-benchmarking-harness/checklists/requirements.md"],
+  "constitution": ".specify/memory/constitution.md",
+  "constitutionVersion": "1.0.0",
+  "status": "analyzed",
+  "phase": "analyze-remediated",
+  "taskCount": 68,
+  "analyzeRemediated": "2026-07-10",
+  "clarified": "2026-07-10",
+  "created": "2026-07-10",
+  "numbering": "sequential"
+}

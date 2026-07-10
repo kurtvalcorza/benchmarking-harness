@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: Model Benchmarking Harness API (POC)
+  version: 0.1.0
+  description: >
+    REST contract for the benchmarking harness. Gates CV models via a three-tier
+    evaluation with a mandatory single-reviewer adjudication step. There is NO
+    endpoint that force-approves a flagged model (Constitution I).
+
+paths:
+  /models:
+    post:
+      summary: Register a model version and upload its weights (auto-triggers evaluation, FR-001/003)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, model_class, framework, weights]
+              properties:
+                name: { type: string }
+                model_class: { $ref: '#/components/schemas/ModelClass' }
+                framework: { type: string, example: pytorch }
+                version: { type: string, default: v1 }
+                declared_sources:
+                  type: array
+                  items: { type: string }
+                  description: Training provenance; empty → flagged, not blank (FR-002/015)
+                weights: { type: string, format: binary }
+      responses:
+        '201':
+          description: Registered; status=pending, evaluation queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/ModelVersion' } } }
+        '422': { description: Unknown model_class (no registry entry) or invalid artifact }
+
+  /models/{id}:
+    get:
+      summary: Model status + current Model Card (FR-021)
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/ModelDetail' } } }
+        '404': { description: Not found }
+
+  /models/{id}/history:
+    get:
+      summary: Append-only performance history across versions/runs (FR-016)
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/EvaluationRun' } }
+
+  /runs/{runId}:
+    get:
+      summary: Full per-tier results for a run (why it passed/failed, SC-009)
+      parameters: [ { name: runId, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } }
+
+  /golden-sets:
+    post:
+      summary: Register a manifest-conforming Golden Test Set (FR-020)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GoldenSetManifest' }
+      responses:
+        '201': { description: Registered }
+        '422': { description: Manifest non-conforming, or is_public=true (rejected, Constitution IV) }
+
+  /adjudication/queue:
+    get:
+      summary: Runs in pending_adjudication with attached evidence (FR-012)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AdjudicationItem' } }
+
+  /adjudication/{runId}/decision:
+    post:
+      summary: Record a human decision (the ONLY path to approve a flagged model, FR-013, Constitution I)
+      parameters: [ { name: runId, in: path, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewer, decision, rationale]
+              properties:
+                reviewer: { type: string }
+                decision: { $ref: '#/components/schemas/Decision' }
+                rationale: { type: string, minLength: 1 }
+      responses:
+        '200': { description: Decision recorded; model status updated }
+        '409': { description: Run not in pending_adjudication }
+        '422': { description: Missing rationale/reviewer }
+
+components:
+  schemas:
+    ModelClass:
+      type: string
+      enum: [detection, segmentation, classification, pose, lane, face]
+    Verdict:
+      type: string
+      enum: [pass, fail, pending_adjudication]
+    ModelStatus:
+      type: string
+      enum: [pending, evaluating, pending_adjudication, approved, rejected]
+    Decision:
+      type: string
+      enum: [approve, reject, request_changes]
+    ModelVersion:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        framework: { type: string }
+        status: { $ref: '#/components/schemas/ModelStatus' }
+    ModelDetail:
+      allOf:
+        - $ref: '#/components/schemas/ModelVersion'
+        - type: object
+          properties:
+            card_markdown: { type: string, description: current Model Card (human + machine blocks) }
+    EvaluationRun:
+      type: object
+      properties:
+        id: { type: string }
+        verdict: { $ref: '#/components/schemas/Verdict' }
+        golden_set: { type: object, properties: { id: {type: string}, version: {type: string}, checksum: {type: string} } }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        infra_ok: { type: boolean }
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/EvaluationRun'
+        - type: object
+          properties:
+            tier_results:
+              type: array
+              items:
+                type: object
+                properties:
+                  tier: { type: string }
+                  condition: { type: string, nullable: true }
+                  metrics: { type: object }
+                  threshold: { type: object, nullable: true }
+                  passed: { type: boolean, nullable: true }
+    GoldenSetManifest:
+      type: object
+      required: [name, model_class, version, checksum, conditions, safety_critical, recall_floors, license, is_public]
+      properties:
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        checksum: { type: string }
+        conditions: { type: array, items: { type: string, enum: [clean, rain, low_light, fog] } }
+        safety_critical:
+          type: array
+          items: { type: string }
+          description: class labels whose per-class recall gates adjudication (FR-026)
+        recall_floors:
+          type: object
+          additionalProperties: { type: number }
+          description: per-class recall floor for each safety_critical class (FR-026)
+        license: { type: string }
+        is_public: { type: boolean, description: MUST be false }
+    AdjudicationItem:
+      type: object
+      properties:
+        run_id: { type: string }
+        trigger: { type: string }
+        evidence_ref: { type: string }
+        model_version_id: { type: string }

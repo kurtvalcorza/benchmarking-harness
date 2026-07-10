@@ -1,0 +1,52 @@
+# --- Licensing guardrail: never commit third-party datasets or model weights ---
+# Datasets are fetched via scripts/ under their own terms; only owned/permissive
+# samples belong in the repo, and those go under samples/ (whitelisted below).
+data/
+datasets/
+downloads/
+*.tar
+*.tar.gz
+*.zip
+
+# Model weights / checkpoints
+models/
+weights/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.safetensors
+
+# Allow explicitly-owned/permissive sample data to be committed
+!samples/
+!samples/**
+
+# --- Secrets ---
+.env
+.env.*
+secret*.json
+*.local.json
+*.key
+*.pem
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+*.egg-info/
+dist/
+build/
+
+# --- OS / editor ---
+.DS_Store
+desktop.ini
+Thumbs.db
+.idea/
+.vscode/
+*.swp
