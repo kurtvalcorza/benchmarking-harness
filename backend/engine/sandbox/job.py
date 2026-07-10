@@ -32,7 +32,9 @@ def _install_socket_guard() -> None:
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
     real_sendto = socket.socket.sendto
-    real_sendmsg = socket.socket.sendmsg
+    # sendmsg is Unix-only; on Windows the attribute doesn't exist (and so
+    # can't be used for egress either) — patch it only where it's present.
+    real_sendmsg = getattr(socket.socket, "sendmsg", None)
 
     def _check(address):  # noqa: ANN001
         host = address[0] if isinstance(address, tuple) else str(address)
@@ -53,16 +55,19 @@ def _install_socket_guard() -> None:
             _check(args[-1])
         return real_sendto(self, data, *args)
 
-    def guarded_sendmsg(self, *args, **kwargs):  # noqa: ANN001
-        # sendmsg(buffers[, ancdata[, flags[, address]]])
-        if len(args) >= 4 and args[3] is not None:
-            _check(args[3])
-        return real_sendmsg(self, *args, **kwargs)
-
     socket.socket.connect = guarded_connect  # type: ignore[method-assign]
     socket.socket.connect_ex = guarded_connect_ex  # type: ignore[method-assign]
     socket.socket.sendto = guarded_sendto  # type: ignore[method-assign]
-    socket.socket.sendmsg = guarded_sendmsg  # type: ignore[method-assign]
+
+    if real_sendmsg is not None:
+
+        def guarded_sendmsg(self, *args, **kwargs):  # noqa: ANN001
+            # sendmsg(buffers[, ancdata[, flags[, address]]])
+            if len(args) >= 4 and args[3] is not None:
+                _check(args[3])
+            return real_sendmsg(self, *args, **kwargs)
+
+        socket.socket.sendmsg = guarded_sendmsg  # type: ignore[method-assign]
 
 
 def assert_no_egress(timeout: float = 2.0) -> None:

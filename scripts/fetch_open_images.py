@@ -60,12 +60,13 @@ def fetch_real(model_class: str, n: int, out: Path) -> None:
         src = Path(sample.filepath)
         shutil.copyfile(src, images_dir / f"{img_id}{src.suffix.lower()}")
         objs = []
-        if model_class == "detection" and sample.detections:
+        # fiftyone's open-images-v7 zoo loader stores detections in `ground_truth`
+        if model_class == "detection" and sample.ground_truth:
             from PIL import Image
 
             with Image.open(src) as im:
                 w, h = im.size
-            for det in sample.detections.detections:
+            for det in sample.ground_truth.detections:
                 if det.label not in LABEL_CANON:
                     continue
                 x, y, bw, bh = det.bounding_box  # relative xywh
