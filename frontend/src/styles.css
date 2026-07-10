@@ -1,0 +1,60 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+.topbar .brand { font-weight: 700; }
+.topbar nav { display: flex; gap: 1rem; }
+form.stack { display: grid; gap: 0.75rem; max-width: 480px; }
+form.stack label { display: grid; gap: 0.25rem; font-size: 0.9rem; font-weight: 600; }
+input, select, textarea, button {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: transparent;
+  color: inherit;
+}
+button.primary {
+  background: #3556c9;
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+button.primary:disabled { opacity: 0.5; cursor: default; }
+table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.pill.approved, .pill.pass { background: #1f7a3d; color: white; }
+.pill.rejected, .pill.fail { background: #b23333; color: white; }
+.pill.pending_adjudication { background: #c98a1b; color: white; }
+.pill.pending, .pill.evaluating { background: #6b7280; color: white; }
+.card-markdown {
+  white-space: pre-wrap;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 8px;
+  padding: 1rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+.error { color: #b23333; font-weight: 600; }
+.muted { opacity: 0.7; font-size: 0.9rem; }
+.breach { color: #b23333; font-weight: 700; }

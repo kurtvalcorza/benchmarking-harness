@@ -1,0 +1,45 @@
+# T004 — api + worker + redis. The worker mounts the docker socket so the
+# sandbox runner can launch ephemeral --network none containers (D1).
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      HARNESS_REDIS_URL: redis://redis:6379/0
+      HARNESS_DATABASE_URL: sqlite:////srv/state/harness.db
+      HARNESS_DATA_DIR: /srv/state/data
+      HARNESS_ARTIFACTS_DIR: /srv/state/artifacts
+      HARNESS_RESULTS_DIR: /srv/state/results
+    volumes:
+      - harness-state:/srv/state
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["python", "-m", "worker.main"]
+    environment:
+      HARNESS_REDIS_URL: redis://redis:6379/0
+      HARNESS_DATABASE_URL: sqlite:////srv/state/harness.db
+      HARNESS_DATA_DIR: /srv/state/data
+      HARNESS_ARTIFACTS_DIR: /srv/state/artifacts
+      HARNESS_RESULTS_DIR: /srv/state/results
+      HARNESS_SANDBOX_IMAGE: benchmarking-harness-sandbox:latest
+    volumes:
+      - harness-state:/srv/state
+      - /var/run/docker.sock:/var/run/docker.sock  # sandbox containers (no-egress)
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  harness-state:

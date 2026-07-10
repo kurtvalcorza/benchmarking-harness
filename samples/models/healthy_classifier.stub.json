@@ -1,0 +1,10 @@
+{
+  "kind": "stub-model",
+  "task": "classification",
+  "skill": 0.95,
+  "class_skill": {},
+  "brightness_sensitivity": 0.3,
+  "grounding": 0.75,
+  "param_count": 5200000,
+  "note": "Owned synthetic demo weights (Constitution II). Classifier for the extensibility demo (quickstart Scenario E)."
+}

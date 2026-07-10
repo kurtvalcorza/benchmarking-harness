@@ -1,0 +1,77 @@
+{
+ "cls_000": [
+  {
+   "label": "vehicle"
+  }
+ ],
+ "cls_001": [
+  {
+   "label": "animal"
+  }
+ ],
+ "cls_002": [
+  {
+   "label": "building"
+  }
+ ],
+ "cls_003": [
+  {
+   "label": "vehicle"
+  }
+ ],
+ "cls_004": [
+  {
+   "label": "animal"
+  }
+ ],
+ "cls_005": [
+  {
+   "label": "building"
+  }
+ ],
+ "cls_006": [
+  {
+   "label": "vehicle"
+  }
+ ],
+ "cls_007": [
+  {
+   "label": "animal"
+  }
+ ],
+ "cls_008": [
+  {
+   "label": "building"
+  }
+ ],
+ "cls_009": [
+  {
+   "label": "vehicle"
+  }
+ ],
+ "cls_010": [
+  {
+   "label": "animal"
+  }
+ ],
+ "cls_011": [
+  {
+   "label": "building"
+  }
+ ],
+ "cls_012": [
+  {
+   "label": "vehicle"
+  }
+ ],
+ "cls_013": [
+  {
+   "label": "animal"
+  }
+ ],
+ "cls_014": [
+  {
+   "label": "building"
+  }
+ ]
+}

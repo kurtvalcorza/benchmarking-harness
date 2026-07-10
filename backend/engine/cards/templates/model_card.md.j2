@@ -1,0 +1,46 @@
+{{ human_sections }}
+
+<!-- machine-generated:begin (regenerated per run — do not hand-edit below) -->
+## Benchmark Results
+
+- **Verdict**: {{ verdict }}
+- **Evaluated**: {{ evaluated_at }}
+- **Harness**: v{{ harness_version }} · sandbox: {{ sandbox_mode }}
+- **Golden Test Set**: {{ golden_set_name }} ({{ golden_set_version }}) · checksum `{{ golden_set_checksum }}`
+
+| Tier | Condition | Metric | Score | Threshold | Result |
+|---|---|---|---|---|---|
+{% for row in tier_rows -%}
+| {{ row.tier }} | {{ row.condition }} | {{ row.metric }} | {{ row.score }} | {{ row.threshold }} | {{ row.result }} |
+{% endfor %}
+{% if worst_case_drop -%}
+**Worst-case degradation**: {{ worst_case_drop.metric }} drops {{ worst_case_drop.drop }} under *{{ worst_case_drop.worst_condition }}* (clean {{ worst_case_drop.clean }} → {{ worst_case_drop.worst_score }}).
+{%- endif %}
+
+### Safety-critical per-class recall
+{% if safety_rows %}
+| Class | Condition | Recall | Floor | OK |
+|---|---|---|---|---|
+{% for row in safety_rows -%}
+| {{ row.cls }} | {{ row.condition }} | {{ row.recall }} | {{ row.floor }} | {{ row.ok }} |
+{% endfor %}
+{%- else %}
+to be confirmed
+{% endif %}
+
+### Known limitations
+
+{% for item in limitations -%}
+- {{ item }}
+{% endfor %}
+
+## Provenance
+
+- **Framework**: {{ framework }}
+- **Declared training sources**: {{ declared_sources }}
+- **Model artifact digest**: {{ artifact_digest }}
+
+## Adjudication
+
+{{ adjudication_block }}
+<!-- machine-generated:end -->

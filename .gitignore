@@ -50,3 +50,12 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# --- Local runtime state ---
+harness.db
+results/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+*.tsbuildinfo

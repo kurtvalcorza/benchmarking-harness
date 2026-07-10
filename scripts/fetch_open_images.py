@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Fetch a permissively licensed Open Images subset into data/ (NEVER committed).
+
+Uses FiftyOne (part of the backend `ml` extra) to download a small Open Images
+V7 slice under its own terms (annotations CC BY 4.0; images individually
+CC BY 2.0). The result is written to $HARNESS_DATA_DIR (gitignored) in the
+harness dataset layout (images/ + annotations.json) — see Constitution II and
+DATASETS.md: datasets are fetched, not redistributed.
+
+    python scripts/fetch_open_images.py --class detection --n 200
+    python scripts/fetch_open_images.py --class classification --n 150
+
+Offline fallback: --synthetic copies the owned synthetic samples instead, so
+the full pipeline can be exercised with no network at all.
+"""
+
+import argparse
+import json
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "backend"))
+
+CLASS_TO_BENCH = {
+    "detection": "open-images-det-sample",
+    "classification": "open-images-cls-sample",
+}
+# a small, road-scene-flavored label slice for the POC
+DET_LABELS = ["Car", "Person", "Traffic sign"]
+CLS_LABELS = ["Car", "Animal", "Building"]
+LABEL_CANON = {
+    "Car": "vehicle",
+    "Person": "pedestrian",
+    "Traffic sign": "traffic_sign",
+    "Animal": "animal",
+    "Building": "building",
+}
+
+
+def fetch_real(model_class: str, n: int, out: Path) -> None:
+    import fiftyone.zoo as foz  # ml extra
+
+    label_types = ["detections"] if model_class == "detection" else ["classifications"]
+    labels = DET_LABELS if model_class == "detection" else CLS_LABELS
+    ds = foz.load_zoo_dataset(
+        "open-images-v7",
+        split="validation",
+        label_types=label_types,
+        classes=labels,
+        max_samples=n,
+        shuffle=False,  # deterministic slice (Constitution IV)
+    )
+    images_dir = out / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    ann: dict[str, list[dict]] = {}
+    for i, sample in enumerate(ds):
+        img_id = f"oi_{i:04d}"
+        src = Path(sample.filepath)
+        shutil.copyfile(src, images_dir / f"{img_id}{src.suffix.lower()}")
+        objs = []
+        if model_class == "detection" and sample.detections:
+            from PIL import Image
+
+            with Image.open(src) as im:
+                w, h = im.size
+            for det in sample.detections.detections:
+                if det.label not in LABEL_CANON:
+                    continue
+                x, y, bw, bh = det.bounding_box  # relative xywh
+                objs.append(
+                    {
+                        "label": LABEL_CANON[det.label],
+                        "bbox": [x * w, y * h, (x + bw) * w, (y + bh) * h],
+                    }
+                )
+        elif model_class == "classification" and sample.positive_labels:
+            for c in sample.positive_labels.classifications:
+                if c.label in LABEL_CANON:
+                    objs = [{"label": LABEL_CANON[c.label]}]
+                    break
+        ann[img_id] = objs
+    (out / "annotations.json").write_text(json.dumps(ann, indent=1))
+
+
+def fetch_synthetic(model_class: str, out: Path) -> None:
+    src = REPO / "samples" / "benchmarks" / CLASS_TO_BENCH[model_class]
+    if out.exists():
+        shutil.rmtree(out)
+    shutil.copytree(src, out)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--class", dest="model_class", choices=list(CLASS_TO_BENCH), required=True)
+    p.add_argument("--n", type=int, default=200)
+    p.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="copy the owned synthetic samples instead of downloading (offline demo)",
+    )
+    args = p.parse_args()
+
+    out = REPO / "data" / "benchmarks" / CLASS_TO_BENCH[args.model_class]
+    out.mkdir(parents=True, exist_ok=True)
+    if args.synthetic:
+        fetch_synthetic(args.model_class, out)
+    else:
+        try:
+            fetch_real(args.model_class, args.n, out)
+        except ImportError:
+            print("fiftyone not installed (pip install 'backend[ml]'); use --synthetic for offline")
+            return 1
+    print(f"dataset written to {out} (gitignored — never commit datasets)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
