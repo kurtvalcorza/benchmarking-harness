@@ -133,8 +133,12 @@ def decide(
         principal_issuer=principal.issuer,
         outcome="success",
     )
+    # T053 (data-model.md §Successful adjudication): the decision, status change,
+    # audit event, AND the regenerated Model Card commit in ONE transaction — a
+    # failure before commit leaves none of them visible. Flush the decision first
+    # so the card regeneration (same transaction) reflects it.
     try:
-        session.commit()
+        session.flush()
     except IntegrityError:
         # two reviewers raced the status check; the unique(run_id) constraint
         # guarantees exactly one permanent decision — the loser gets a 409

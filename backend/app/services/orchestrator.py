@@ -1,8 +1,18 @@
-"""Evaluation orchestrator (T031/T034/T059).
+"""Evaluation orchestrator (T052/T055/US4 durable dispatch).
 
 Runs the three tiers IN ORDER, halts on a hard tier failure (FR-007), persists
-the run + per-tier results append-only in one transaction, applies the FR-012
-flag rule, transitions ModelVersion.status, and (re)generates the Model Card.
+the run + per-tier results append-only, applies the FR-012 flag rule,
+transitions ModelVersion.status, and (re)generates the Model Card — the run,
+tiers, status, audit, card, AND the durable JobIntent completion all commit in
+ONE transaction (data-model.md §Successful evaluation completion), so there is
+never a completed run without its current card, nor a completed intent without
+its run.
+
+Durable dispatch (US4): every evaluation is backed by a `JobIntent` (the
+transactional outbox). Submission creates the intent inside its own transaction;
+the worker/inline executor CLAIMS the intent before running and COMPLETES it in
+the completion transaction, so a duplicate transport delivery of a completed
+intent performs no new work.
 
 All inference is dispatched through the no-egress sandbox runner (D1) — this
 process never loads model weights.
@@ -14,16 +24,18 @@ Execution modes:
 
 import json
 import os
+import uuid
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.db.enums import Condition, ModelClass, ModelStatus, Tier
+from app.db.enums import Condition, JobReason, JobState, ModelClass, ModelStatus, Tier
 from app.db.models import (
     AdjudicationRecord,
     EvaluationRun,
     GoldenTestSet,
+    JobIntent,
     Model,
     ModelCard,
     ModelVersion,
@@ -32,8 +44,9 @@ from app.db.models import (
     utcnow,
 )
 from app.db.repositories import get_engine
-from app.services import audit
+from app.services import audit, jobs
 from app.services.config import get_threshold
+from app.services.evidence_store import EvidenceStage
 from app.services.state_machine import assert_transition, status_for_verdict
 from engine.cards import generator as cards
 from engine.datasets import REPO_ROOT, Dataset
@@ -54,10 +67,18 @@ def eval_mode() -> str:
     return os.environ.get("HARNESS_EVAL_MODE", "rq")
 
 
-def enqueue_evaluation(version_id: str) -> None:
-    """FR-003: evaluation starts automatically on upload — no manual trigger."""
+# --------------------------------------------------------------------------- #
+# Durable dispatch (US4 transactional outbox)                                  #
+# --------------------------------------------------------------------------- #
+
+
+def dispatch_intent(intent_id: str, version_id: str) -> None:
+    """Publish a durable intent to the transport. Inline mode runs it now
+    through the SAME claim/complete code the worker uses (T058); rq mode
+    enqueues `evaluate_intent`. Failures here are non-fatal: the intent is
+    already durable, so the dispatcher/reconciler reclaims a lost publish."""
     if eval_mode() == "inline":
-        evaluate_version(version_id)
+        evaluate_intent(intent_id)
         return
     from redis import Redis
     from rq import Queue
@@ -65,7 +86,48 @@ def enqueue_evaluation(version_id: str) -> None:
     q = Queue("evaluations", connection=Redis.from_url(
         os.environ.get("HARNESS_REDIS_URL", "redis://localhost:6379/0")
     ))
-    q.enqueue("app.services.orchestrator.evaluate_version", version_id, job_timeout=7200)
+    q.enqueue("app.services.orchestrator.evaluate_intent", intent_id, job_timeout=7200)
+
+
+def enqueue_evaluation(version_id: str) -> None:
+    """FR-003 / re-evaluation dispatch primitive. Publishes the version's
+    outstanding durable intent — the one the claim-winner created in its own
+    transaction (submission / golden-set update / mid-run staleness) — so a lost
+    publish is recovered by re-dispatching the SAME intent, never by minting a
+    duplicate. Falls back to a fresh operator intent only when none is pending
+    (a bare operator retry). Single positional arg so the recovery reconciler
+    and tests can drive it uniformly."""
+    with Session(get_engine()) as session:
+        pending = session.exec(
+            select(JobIntent)
+            .where(
+                JobIntent.model_version_id == version_id,
+                JobIntent.state == JobState.pending,
+            )
+            .order_by(JobIntent.created_at)
+        ).all()
+        intent = pending[-1] if pending else None
+        if intent is None:
+            intent = jobs.create_intent(
+                session,
+                model_version_id=version_id,
+                reason=JobReason.operator_retry,
+                occasion=uuid.uuid4().hex,
+            )
+            session.commit()
+        intent_id = intent.id
+    dispatch_intent(intent_id, version_id)
+
+
+def evaluate_intent(intent_id: str) -> str | None:
+    """Worker/inline entrypoint: resolve the intent's version and evaluate it
+    under the intent's claim. A missing intent is a no-op."""
+    with Session(get_engine()) as session:
+        intent = session.get(JobIntent, intent_id)
+        if intent is None:
+            return None
+        version_id = intent.model_version_id
+    return evaluate_version(version_id, intent_id=intent_id)
 
 
 def _latest_golden_set(session: Session, model_class: ModelClass) -> GoldenTestSet | None:
@@ -138,11 +200,26 @@ def recover_orphaned_reevaluations() -> list[str]:
     return orphaned
 
 
-def evaluate_version(version_id: str) -> str | None:
-    """Run the full three-tier evaluation for a ModelVersion. Returns run id."""
+def evaluate_version(version_id: str, *, intent_id: str | None = None) -> str | None:
+    """Run the full three-tier evaluation for a ModelVersion. Returns run id.
+
+    When `intent_id` is supplied the run executes under that JobIntent's claim:
+    a duplicate transport delivery (intent already completed / under a live
+    claim) is a NO-OP that returns None without re-running the model (T057).
+    """
+    claim: jobs.Claim | None = None
+    if intent_id is not None:
+        claim = jobs.claim_intent(intent_id, worker_id=_worker_id())
+        if claim is None:
+            return None  # duplicate delivery — perform no evaluation
+
     with Session(get_engine()) as session:
         version = session.get(ModelVersion, version_id)
         if version is None:
+            if claim is not None:
+                jobs.fail_intent(
+                    intent_id, claim.attempt_id, error="unknown model version", retryable=False
+                )
             raise ValueError(f"unknown model version {version_id}")
         model = session.get(Model, version.model_id)
         assert_transition(version.status, ModelStatus.evaluating)
@@ -247,6 +324,11 @@ def evaluate_version(version_id: str) -> str | None:
 
     run.finished_at = utcnow()
 
+    # Stage tier evidence to a temp area + digest it BEFORE the completion
+    # transaction; publish atomically just before commit, compensate on failure
+    # (T051) — a rolled-back run leaves no evidence, a committed run never lacks
+    # the evidence its TierResults reference.
+    stage = EvidenceStage(results_root=results_dir(), run_id=run_id)
     try:
         with Session(get_engine()) as session:
             version = session.get(ModelVersion, version_id)
@@ -256,7 +338,7 @@ def evaluate_version(version_id: str) -> str | None:
                 run.verdict = None
                 run.flag_trigger = f"infra:{infra_error[:300]}"
                 session.add(run)
-                _persist_tier_results(session, run, outcomes, golden)
+                _persist_tier_results(session, run, outcomes, golden, stage)
                 version.status = ModelStatus.pending  # eligible for retry/resubmission
                 audit.record(
                     session,
@@ -265,10 +347,16 @@ def evaluate_version(version_id: str) -> str | None:
                     target_ref=f"run:{run.id}",
                 )
                 session.add(version)
+                # complete the intent in the SAME txn: an infra run is a real
+                # (non-retryable-by-redelivery) outcome — the version is back to
+                # `pending` and the durable claim/recovery path owns any retry
+                if claim is not None:
+                    jobs.complete_intent(session, intent_id, claim.attempt_id, run_id=run.id)
+                _upsert_card(
+                    session, version_id, model_name, sandbox_mode_used, outcomes, run, golden
+                )
+                stage.publish()
                 session.commit()
-                # fall through to the staleness recheck below — an infra run
-                # that had no golden set must still be re-queued if the first
-                # set for its class landed while it was in flight
             else:
                 score = score_run(
                     outcomes=outcomes,
@@ -278,7 +366,7 @@ def evaluate_version(version_id: str) -> str | None:
                 run.verdict = score.verdict
                 run.flag_trigger = score.flag_trigger
                 session.add(run)
-                _persist_tier_results(session, run, outcomes, golden)
+                _persist_tier_results(session, run, outcomes, golden, stage)
 
                 new_status = status_for_verdict(score.verdict)
                 assert_transition(version.status, new_status)
@@ -291,13 +379,24 @@ def evaluate_version(version_id: str) -> str | None:
                     target_ref=f"model_version:{version.id}",
                     checksum=golden.checksum if golden else None,
                 )
+                # ONE transaction: run + tiers + status + audit + card + intent
+                # completion (data-model.md §Successful evaluation completion)
+                if claim is not None:
+                    jobs.complete_intent(session, intent_id, claim.attempt_id, run_id=run.id)
+                _upsert_card(
+                    session, version_id, model_name, sandbox_mode_used, outcomes, run, golden
+                )
+                stage.publish()
                 session.commit()
-
-                _regenerate_card(session, version_id, model_name, sandbox_mode_used)
-                session.commit()
-    except Exception:
+    except Exception as e:
         # result persistence itself failed (bad results dir, permissions, full
-        # disk) — never leave the version stuck `evaluating` with no run
+        # disk) — compensate the staged evidence, never leave the version stuck
+        # `evaluating` with no run, and let the durable intent retry
+        stage.discard()
+        if claim is not None:
+            jobs.fail_intent(
+                intent_id, claim.attempt_id, error=f"persist:{e}", retryable=True
+            )
         _reset_to_pending(version_id, "run-persistence-failure")
         raise
 
@@ -312,6 +411,14 @@ def evaluate_version(version_id: str) -> str | None:
         stale = latest is not None and (golden is None or latest.id != golden.id)
         claimed = stale and _claim_reevaluation(session, version_id, latest.id)
         if claimed:
+            # durable outbox intent for the mid-run re-evaluation, created IN THE
+            # SAME transaction as the claim (T055) so a lost publish is recoverable
+            jobs.create_intent(
+                session,
+                model_version_id=version_id,
+                reason=JobReason.mid_run_staleness,
+                golden_set_id=latest.id,
+            )
             audit.record(
                 session,
                 actor="orchestrator",
@@ -323,6 +430,11 @@ def evaluate_version(version_id: str) -> str | None:
     if claimed:
         enqueue_evaluation(version_id)
     return run_id
+
+
+def _worker_id() -> str:
+    """Stable-per-process claim owner for the audit trail."""
+    return f"{os.environ.get('HOSTNAME', 'local')}:{os.getpid()}"
 
 
 def _reset_to_pending(version_id: str, reason: str) -> None:
@@ -344,38 +456,33 @@ def _reset_to_pending(version_id: str, reason: str) -> None:
 
 
 def _persist_tier_results(
-    session: Session, run: EvaluationRun, outcomes: list[TierOutcome], golden
+    session: Session,
+    run: EvaluationRun,
+    outcomes: list[TierOutcome],
+    golden,
+    stage: EvidenceStage,
 ) -> None:
-    import hashlib
-
-    ev_dir = results_dir() / "runs" / run.id
-    ev_dir.mkdir(parents=True, exist_ok=True)
     dataset_checksum = (golden.checksum if golden else "") or ""
     for i, o in enumerate(outcomes):
-        evidence_path = ev_dir / f"{i:02d}-{o.tier.value}{'-' + o.condition if o.condition else ''}.json"
+        name = f"{o.tier.value}{'-' + o.condition if o.condition else ''}"
         # US2: the tier stamps evaluator.dataset_checksum with ITS OWN dataset
         # (Tier 1 = benchmark, Tier 2 = Golden Set); only fill a missing value
         # here, never overwrite the tier's correct one.
         evaluator = dict(o.evaluator) if o.evaluator else None
         if evaluator is not None and not evaluator.get("dataset_checksum"):
             evaluator["dataset_checksum"] = dataset_checksum
-        payload = json.dumps(
-            {
-                "tier": o.tier.value,
-                "condition": o.condition,
-                "metrics": o.metrics,
-                "threshold": o.threshold,
-                "passed": o.passed,
-                "coverage": o.coverage,
-                "evaluator": evaluator,
-                "evidence": o.evidence,
-                "golden_set_checksum": golden.checksum if golden else None,
-            },
-            indent=2,
-            default=str,
-        )
-        evidence_path.write_text(payload)
-        evidence_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        payload = {
+            "tier": o.tier.value,
+            "condition": o.condition,
+            "metrics": o.metrics,
+            "threshold": o.threshold,
+            "passed": o.passed,
+            "coverage": o.coverage,
+            "evaluator": evaluator,
+            "evidence": o.evidence,
+            "golden_set_checksum": golden.checksum if golden else None,
+        }
+        evidence_ref, evidence_digest = stage.stage(i, name, payload)
         session.add(
             TierResult(
                 run_id=run.id,
@@ -386,17 +493,101 @@ def _persist_tier_results(
                 passed=o.passed,
                 coverage=o.coverage,
                 evaluator=evaluator,
-                evidence_ref=str(evidence_path),
+                evidence_ref=evidence_ref,
                 evidence_digest=evidence_digest,
                 dataset_checksum=dataset_checksum,
             )
         )
 
 
+def _upsert_card(
+    session: Session,
+    version_id: str,
+    model_name: str,
+    sandbox_mode: str | None,
+    outcomes: list[TierOutcome],
+    run: EvaluationRun,
+    golden,
+) -> None:
+    """T050/T052: build the Model Card from EXPLICIT transaction-local inputs
+    (this run's in-memory outcomes) and upsert it in the completion transaction
+    — never a second commit, never a re-query of half-committed state."""
+    version = session.get(ModelVersion, version_id)
+    tier_rows = [
+        {
+            "tier": o.tier.value,
+            "condition": o.condition,
+            "metrics": o.metrics,
+            "threshold": o.threshold,
+            "passed": o.passed,
+        }
+        for o in outcomes
+    ]
+    golden_block = (
+        {
+            "name": golden.name,
+            "version": run.golden_set_version,
+            "checksum": run.golden_set_checksum,
+        }
+        if golden is not None and run.golden_set_id
+        else None
+    )
+    inputs = cards.CardInputs(
+        model_name=model_name,
+        verdict=run.verdict.value if run.verdict else None,
+        flag_trigger=run.flag_trigger,
+        evaluated_at=run.finished_at,
+        harness_version=HARNESS_VERSION,
+        sandbox_mode=sandbox_mode,
+        golden_set=golden_block,
+        tier_results=tier_rows,
+        framework=version.framework,
+        declared_sources=list(version.declared_sources or []),
+        artifact_digest=cards.artifact_digest(version.artifact_ref),
+        adjudications=[],  # a fresh run carries no adjudication yet
+    )
+    _write_card(session, version_id, inputs)
+
+
+def _write_card(session: Session, version_id: str, inputs: cards.CardInputs) -> None:
+    existing = session.exec(
+        select(ModelCard).where(ModelCard.model_version_id == version_id)
+    ).first()
+    markdown, missing = cards.generate(
+        inputs,
+        existing_card=existing.human_sections + existing.machine_blocks if existing else None,
+    )
+    human = cards.split_human_sections(markdown)
+    machine = markdown[len(human):] if markdown.startswith(human) else markdown
+    if existing:
+        existing.human_sections = human
+        existing.machine_blocks = machine
+        existing.missing_fields = missing
+        existing.generated_at = utcnow()
+        session.add(existing)
+    else:
+        session.add(
+            ModelCard(
+                model_version_id=version_id,
+                human_sections=human,
+                machine_blocks=machine,
+                missing_fields=missing,
+            )
+        )
+    audit.record(
+        session,
+        actor="orchestrator",
+        action="model-card-generated",
+        target_ref=f"model_version:{version_id}",
+    )
+
+
 def _regenerate_card(
     session: Session, version_id: str, model_name: str, sandbox_mode: str | None
 ) -> None:
-    """T045-047: rebuild machine blocks from stored results; preserve human text."""
+    """Adjudication path: rebuild the machine blocks from STORED results (the
+    decision is already flushed in this transaction) and upsert the card in the
+    same transaction as the decision (T053). Human sections are preserved."""
     version = session.get(ModelVersion, version_id)
     runs = session.exec(
         select(EvaluationRun)
@@ -445,9 +636,6 @@ def _regenerate_card(
     if latest and latest.golden_set_id:
         gs = session.get(GoldenTestSet, latest.golden_set_id)
         golden_name = gs.name if gs else latest.golden_set_id
-    existing = session.exec(
-        select(ModelCard).where(ModelCard.model_version_id == version_id)
-    ).first()
     inputs = cards.CardInputs(
         model_name=model_name,
         verdict=latest.verdict.value if latest and latest.verdict else None,
@@ -470,32 +658,7 @@ def _regenerate_card(
         artifact_digest=cards.artifact_digest(version.artifact_ref),
         adjudications=adjudications,
     )
-    markdown, missing = cards.generate(
-        inputs, existing_card=existing.human_sections + existing.machine_blocks if existing else None
-    )
-    human = cards.split_human_sections(markdown)
-    machine = markdown[len(human):] if markdown.startswith(human) else markdown
-    if existing:
-        existing.human_sections = human
-        existing.machine_blocks = machine
-        existing.missing_fields = missing
-        existing.generated_at = utcnow()
-        session.add(existing)
-    else:
-        session.add(
-            ModelCard(
-                model_version_id=version_id,
-                human_sections=human,
-                machine_blocks=machine,
-                missing_fields=missing,
-            )
-        )
-    audit.record(
-        session,
-        actor="orchestrator",
-        action="model-card-generated",
-        target_ref=f"model_version:{version_id}",
-    )
+    _write_card(session, version_id, inputs)
 
 
 def reevaluate_for_golden_set(golden_set: GoldenTestSet) -> list[str]:
@@ -542,6 +705,14 @@ def reevaluate_for_golden_set(golden_set: GoldenTestSet) -> list[str]:
                 continue
             if not _claim_reevaluation(session, vid, golden_set.id):
                 continue
+            # durable outbox intent for the re-evaluation, created IN THE SAME
+            # transaction as the claim (T055) so a lost enqueue is recoverable
+            jobs.create_intent(
+                session,
+                model_version_id=vid,
+                reason=JobReason.golden_set_update,
+                golden_set_id=golden_set.id,
+            )
             # status stays put until the re-run starts (approved/pending →
             # evaluating are legal transitions); the audit event records the flag
             audit.record(

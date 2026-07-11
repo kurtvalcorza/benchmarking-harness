@@ -65,7 +65,9 @@ def readyz(
     anonymously. Reports schema status from the migration head; dependency
     reachability is reported best-effort.
     """
+    from app.services import reconciliation
     from app.services.config import load_config
+    from app.services.orchestrator import results_dir
     from app.services.schema_check import schema_status
 
     cfg = load_config()
@@ -80,6 +82,14 @@ def readyz(
             conn.exec_driver_sql("SELECT 1")
     except Exception:
         database = "unavailable"
+    # T059: durable-work reconciliation — stuck intents (expired leases), failed
+    # intents, and orphaned evidence. Reported for operator visibility but does
+    # NOT fail readiness: the instance can still serve while a background sweep
+    # clears the backlog (dispatcher.reclaim_expired_leases).
+    try:
+        dispatcher_health = reconciliation.summary(results_dir())
+    except Exception:
+        dispatcher_health = {"status": "unknown"}
     ok = database == "ready" and schema in ("current",)
     if not ok:
         # readiness probes key off the status code (openapi 503), so a broken
@@ -89,9 +99,8 @@ def readyz(
         "ok": ok,
         "database": database,
         "schema": schema,
-        # dispatcher/runner deep-health probes land with US4/US6; report ready
-        # once their reconciliation surfaces exist.
-        "dispatcher": "ready",
+        "dispatcher": dispatcher_health,
+        # runner deep-health probe lands with US6's dedicated runner boundary.
         "runner": "ready",
         "upload_limit_bytes": cfg.max_upload_bytes,
     }
