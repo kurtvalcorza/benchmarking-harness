@@ -201,57 +201,61 @@ def evaluate_version(version_id: str) -> str | None:
                 )
                 session.add(version)
                 session.commit()
-                return run_id
+                # fall through to the staleness recheck below — an infra run
+                # that had no golden set must still be re-queued if the first
+                # set for its class landed while it was in flight
+            else:
+                score = score_run(
+                    outcomes=outcomes,
+                    safety_breach=safety_breach,
+                    declared_sources=declared_sources,
+                )
+                run.verdict = score.verdict
+                run.flag_trigger = score.flag_trigger
+                session.add(run)
+                _persist_tier_results(session, run, outcomes, golden)
 
-            score = score_run(
-                outcomes=outcomes,
-                safety_breach=safety_breach,
-                declared_sources=declared_sources,
-            )
-            run.verdict = score.verdict
-            run.flag_trigger = score.flag_trigger
-            session.add(run)
-            _persist_tier_results(session, run, outcomes, golden)
+                new_status = status_for_verdict(score.verdict)
+                assert_transition(version.status, new_status)
+                version.status = new_status
+                session.add(version)
+                audit.record(
+                    session,
+                    actor="orchestrator",
+                    action=f"status-change:{new_status.value}",
+                    target_ref=f"model_version:{version.id}",
+                    checksum=golden.checksum if golden else None,
+                )
+                session.commit()
 
-            new_status = status_for_verdict(score.verdict)
-            assert_transition(version.status, new_status)
-            version.status = new_status
-            session.add(version)
-            audit.record(
-                session,
-                actor="orchestrator",
-                action=f"status-change:{new_status.value}",
-                target_ref=f"model_version:{version.id}",
-                checksum=golden.checksum if golden else None,
-            )
-            session.commit()
-
-            _regenerate_card(session, version_id, model_name, sandbox_mode_used)
-            session.commit()
+                _regenerate_card(session, version_id, model_name, sandbox_mode_used)
+                session.commit()
     except Exception:
         # result persistence itself failed (bad results dir, permissions, full
         # disk) — never leave the version stuck `evaluating` with no run
         _reset_to_pending(version_id, "run-persistence-failure")
         raise
 
-    # a golden-set update may have landed while this run was IN FLIGHT — the
-    # candidates in reevaluate_for_golden_set are derived from persisted runs,
-    # so this run was invisible to it. Re-enqueue against the current set.
-    if golden is not None:
-        with Session(get_engine()) as session:
-            latest = _latest_golden_set(session, model_class)
-            stale = latest is not None and latest.id != golden.id
-            if stale:
-                audit.record(
-                    session,
-                    actor="orchestrator",
-                    action="re-evaluation-flagged:golden-set-updated-mid-run",
-                    target_ref=f"model_version:{version_id}",
-                    checksum=latest.checksum,
-                )
-                session.commit()
+    # A golden-set change may have landed while this run was IN FLIGHT — either
+    # a newer set replaced the one we scored against, or the FIRST set for the
+    # class appeared during a no-golden run. Both are invisible to
+    # reevaluate_for_golden_set (its candidates come from persisted runs), so
+    # re-enqueue against the now-current set. Bounded: each re-run captures the
+    # then-current set, so this stops as soon as registrations stop arriving.
+    with Session(get_engine()) as session:
+        latest = _latest_golden_set(session, model_class)
+        stale = latest is not None and (golden is None or latest.id != golden.id)
         if stale:
-            enqueue_evaluation(version_id)
+            audit.record(
+                session,
+                actor="orchestrator",
+                action="re-evaluation-flagged:golden-set-changed-mid-run",
+                target_ref=f"model_version:{version_id}",
+                checksum=latest.checksum,
+            )
+            session.commit()
+    if stale:
+        enqueue_evaluation(version_id)
     return run_id
 
 

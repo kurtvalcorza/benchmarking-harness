@@ -190,6 +190,27 @@ def test_label_map_canonicalizes_foreign_vocabulary(client, tmp_path, monkeypatc
     assert t2_clean["metrics"]["map_50_95"] > 0.2
 
 
+def test_submit_before_any_golden_set_recovers_on_registration(client):
+    """A model submitted before any golden set exists infra-fails to `pending`,
+    then is picked up and evaluated when the first set for its class registers
+    (FR-003/FR-004 recovery; the mirror of the in-flight-update case)."""
+    from tests.conftest import HEALTHY_DET
+
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="early-bird", sources=["s"])
+    # no golden set yet → Tier 2 can't run → infra failure → back to pending
+    assert mv["status"] == "pending"
+    first = client.get(f"/models/{mv['id']}/history").json()
+    assert len(first) == 1 and first[0]["infra_ok"] is False
+
+    out = register_golden(client, det_manifest())
+    assert mv["id"] in out["reevaluation_flagged"]
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[1]["golden_set"]["version"] == "v1"
+    # now scored against a real set → healthy model approved
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "approved"
+
+
 def test_golden_set_update_flags_reevaluation(client):
     """FR-004: models evaluated against v1 are re-flagged when v2 registers."""
     register_golden(client, det_manifest())
