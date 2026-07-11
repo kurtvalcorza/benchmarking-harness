@@ -149,6 +149,10 @@ def docker_container_config(
     exercised against a live daemon there — validate on a docker host before
     relying on the docker path in production (the runtime no-egress assertion
     in engine.sandbox.job is the independent backstop either way)."""
+    # keep the artifact's real filename (and thus extension) inside the
+    # container: adapters dispatch on suffix, so a bare /mnt/artifact would
+    # make every real .pt/.onnx submission unloadable in docker mode (F9)
+    artifact_target = f"/mnt/artifact/{Path(artifact).name}"
     return {
         "image": DOCKER_IMAGE,
         "command": ["python", "-m", "engine.sandbox.job", "--spec", "/mnt/out/spec.json"],
@@ -157,7 +161,7 @@ def docker_container_config(
         "read_only": True,  # read-only root fs
         "volumes": {
             _host_path(str(BACKEND_ROOT)): {"bind": "/srv/backend", "mode": "ro"},
-            _host_path(artifact): {"bind": "/mnt/artifact", "mode": "ro"},
+            _host_path(artifact): {"bind": artifact_target, "mode": "ro"},
             _host_path(dataset_root): {"bind": "/mnt/dataset", "mode": "ro"},
             _host_path(str(out_dir)): {"bind": "/mnt/out", "mode": "rw"},
         },
@@ -183,7 +187,7 @@ def _run_docker(
 
     spec = {
         "framework": framework,
-        "artifact": "/mnt/artifact",
+        "artifact": f"/mnt/artifact/{Path(artifact).name}",
         "model_class": model_class,
         "dataset": "/mnt/dataset",
         "out": "/mnt/out/result.json",

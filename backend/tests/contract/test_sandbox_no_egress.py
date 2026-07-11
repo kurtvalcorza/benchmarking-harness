@@ -34,6 +34,12 @@ def test_docker_config_is_hardened(tmp_path):
     assert cfg["network_disabled"] is True  # --network none
     assert cfg["network_mode"] == "none"
     assert cfg["read_only"] is True
+    # the artifact keeps its filename/extension in-container (adapters
+    # dispatch on suffix — F9)
+    artifact_binds = [
+        spec["bind"] for spec in cfg["volumes"].values() if spec["bind"].startswith("/mnt/artifact")
+    ]
+    assert artifact_binds == ["/mnt/artifact/healthy_detector.stub.json"]
     for mount, spec in cfg["volumes"].items():
         if spec["bind"] != "/mnt/out":
             assert spec["mode"] == "ro", f"{mount} must be read-only"

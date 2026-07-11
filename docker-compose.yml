@@ -10,6 +10,11 @@
 #   python scripts/seed_demo.py --data-ref /srv/samples/golden/det-golden
 #   python scripts/register_golden_set.py --class detection \
 #     --data /srv/data/benchmarks/open-images-det-sample --license cc-by-4.0
+#
+# Windows note (F8): ${PWD} expands to a C:/... path the WSL-hosted daemon
+# (Docker/Rancher Desktop) cannot resolve — /c/... silently mounts EMPTY.
+# Override HARNESS_HOSTPATH_MAP with daemon-visible /mnt/c/... paths in a
+# gitignored docker-compose.override.yml on such hosts.
 services:
   # build-only service: gives `docker compose up/build` a reason to produce the
   # sandbox image the worker launches evaluations in (it exits immediately)
