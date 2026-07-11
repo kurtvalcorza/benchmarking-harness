@@ -1,24 +1,28 @@
 {
-  "activeFeature": "001-model-benchmarking-harness",
-  "featureDir": "specs/001-model-benchmarking-harness",
-  "spec": "specs/001-model-benchmarking-harness/spec.md",
-  "plan": "specs/001-model-benchmarking-harness/plan.md",
-  "research": "specs/001-model-benchmarking-harness/research.md",
-  "dataModel": "specs/001-model-benchmarking-harness/data-model.md",
+  "feature_directory": "specs/002-production-hardening",
+  "activeFeature": "002-production-hardening",
+  "featureDir": "specs/002-production-hardening",
+  "spec": "specs/002-production-hardening/spec.md",
+  "plan": "specs/002-production-hardening/plan.md",
+  "research": "specs/002-production-hardening/research.md",
+  "dataModel": "specs/002-production-hardening/data-model.md",
   "contracts": [
-    "specs/001-model-benchmarking-harness/contracts/openapi.yaml",
-    "specs/001-model-benchmarking-harness/contracts/inference-adapter.md"
+    "specs/002-production-hardening/contracts/openapi.yaml",
+    "specs/002-production-hardening/contracts/metric-evidence.md",
+    "specs/002-production-hardening/contracts/security-boundary.md"
   ],
-  "quickstart": "specs/001-model-benchmarking-harness/quickstart.md",
-  "tasks": "specs/001-model-benchmarking-harness/tasks.md",
-  "checklists": ["specs/001-model-benchmarking-harness/checklists/requirements.md"],
+  "quickstart": "specs/002-production-hardening/quickstart.md",
+  "tasks": "specs/002-production-hardening/tasks.md",
+  "checklists": [
+    "specs/002-production-hardening/checklists/requirements.md"
+  ],
   "constitution": ".specify/memory/constitution.md",
   "constitutionVersion": "1.0.0",
   "status": "analyzed",
-  "phase": "analyze-remediated",
-  "taskCount": 68,
-  "analyzeRemediated": "2026-07-10",
-  "clarified": "2026-07-10",
-  "created": "2026-07-10",
+  "phase": "ready-for-implementation",
+  "taskCount": 85,
+  "clarified": "2026-07-11",
+  "analyzed": "2026-07-11",
+  "created": "2026-07-11",
   "numbering": "sequential"
 }
