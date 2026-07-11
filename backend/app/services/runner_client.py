@@ -35,11 +35,16 @@ def run_remote(
         raise SandboxError("run_remote called without HARNESS_RUNNER_URL configured")
     token = os.environ.get("HARNESS_RUNNER_TOKEN", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    # A full evaluation runs THREE tiers sequentially, each bounded by the sandbox
-    # wall-clock ceiling (default 1800s), so the delegated HTTP call must allow
-    # ~3× that — matching the RQ job timeout (7200s). A shorter timeout would make
-    # a legitimately long run spuriously infra-fail while the runner is still working.
-    timeout = float(os.environ.get("HARNESS_RUNNER_HTTP_TIMEOUT", "7200"))
+    # One run_remote call executes ONE tier's sandbox inference (Tier 2 calls it
+    # per condition), bounded by the sandbox wall-clock ceiling
+    # (HARNESS_SANDBOX_TIMEOUT, default 1800s) — NOT the whole 3-tier run. Give
+    # the HTTP call that ceiling plus headroom for container start/teardown, and
+    # keep it comfortably BELOW the RQ job deadline (job_timeout=7200s) so a hung
+    # runner raises a clean per-call SandboxError (infra failure) before RQ kills
+    # the worker and leaves the intent to stale-lease reconciliation.
+    sandbox_ceiling = int(os.environ.get("HARNESS_SANDBOX_TIMEOUT", "1800"))
+    default_timeout = min(sandbox_ceiling + 300, 7200 - 120)
+    timeout = float(os.environ.get("HARNESS_RUNNER_HTTP_TIMEOUT", str(default_timeout)))
     try:
         resp = httpx.post(
             url.rstrip("/") + "/run",

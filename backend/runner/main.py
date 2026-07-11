@@ -38,9 +38,11 @@ def _authorize(authorization: str | None) -> None:
         # on the network drive host-socket execution
         raise HTTPException(503, "runner not configured (HARNESS_RUNNER_TOKEN unset)")
     presented = (authorization or "").removeprefix("Bearer ").strip()
-    # constant-time compare: this secret gates host-socket execution, so avoid a
-    # timing side-channel that could leak it byte-by-byte
-    if not hmac.compare_digest(presented, expected):
+    # constant-time compare on BYTES: this secret gates host-socket execution, so
+    # avoid a timing side-channel — and encode first, since hmac.compare_digest on
+    # `str` raises TypeError for a non-ASCII value (an attacker-supplied header),
+    # which would surface as a 500 instead of a fail-closed 401.
+    if not hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(401, "invalid runner token")
 
 

@@ -40,6 +40,20 @@ def test_run_rejects_wrong_token(client, monkeypatch):
     assert r.status_code == 401
 
 
+def test_authorize_rejects_non_ascii_token_without_typeerror(monkeypatch):
+    """A non-ASCII bearer (an attacker can send latin-1 header bytes that
+    Starlette decodes to a non-ASCII str) must fail closed via HTTPException(401),
+    not raise TypeError inside hmac.compare_digest and surface as a 500 (Codex
+    review). Tested at the _authorize level: the HTTP test client encodes headers
+    as ASCII and would reject the value before it reaches the server."""
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("HARNESS_RUNNER_TOKEN", "the-real-secret")
+    with pytest.raises(HTTPException) as exc:
+        runner_main._authorize("Bearer café-ÿ-™")
+    assert exc.value.status_code == 401
+
+
 def test_run_accepts_correct_token(client, monkeypatch):
     monkeypatch.setenv("HARNESS_RUNNER_TOKEN", "the-real-secret")
     # don't actually launch a sandbox — prove the correct token passes auth
