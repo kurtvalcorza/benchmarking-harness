@@ -12,6 +12,28 @@ from tests.conftest import (
 )
 
 
+def _detection_golden(name: str, version: str):
+    """An unsaved detection GoldenTestSet, built directly (bypassing the
+    /golden-sets endpoint and reevaluate_for_golden_set) so the mid-run tests
+    can land a set without triggering registration recovery."""
+    from app.db.enums import ModelClass
+    from app.db.models import GoldenTestSet
+    from engine.datasets import Dataset
+    from tests.conftest import DET_GOLDEN
+
+    return GoldenTestSet(
+        name=name,
+        model_class=ModelClass.detection,
+        version=version,
+        checksum=Dataset(root=DET_GOLDEN).checksum(),
+        conditions=["rain", "low_light", "fog"],
+        safety_critical_classes=["pedestrian"],
+        recall_floors={"pedestrian": 0.6},
+        license="owned",
+        data_ref=str(DET_GOLDEN),
+    )
+
+
 def test_classifier_evaluates_via_registry(client):
     register_golden(client, cls_manifest())
     mv = submit_model(
@@ -190,6 +212,27 @@ def test_label_map_canonicalizes_foreign_vocabulary(client, tmp_path, monkeypatc
     assert t2_clean["metrics"]["map_50_95"] > 0.2
 
 
+def test_submit_before_any_golden_set_recovers_on_registration(client):
+    """A model submitted before any golden set exists infra-fails to `pending`,
+    then is picked up and evaluated when the first set for its class registers
+    (FR-003/FR-004 recovery; the mirror of the in-flight-update case)."""
+    from tests.conftest import HEALTHY_DET
+
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="early-bird", sources=["s"])
+    # no golden set yet → Tier 2 can't run → infra failure → back to pending
+    assert mv["status"] == "pending"
+    first = client.get(f"/models/{mv['id']}/history").json()
+    assert len(first) == 1 and first[0]["infra_ok"] is False
+
+    out = register_golden(client, det_manifest())
+    assert mv["id"] in out["reevaluation_flagged"]
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[1]["golden_set"]["version"] == "v1"
+    # now scored against a real set → healthy model approved
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "approved"
+
+
 def test_golden_set_update_flags_reevaluation(client):
     """FR-004: models evaluated against v1 are re-flagged when v2 registers."""
     register_golden(client, det_manifest())
@@ -201,3 +244,177 @@ def test_golden_set_update_flags_reevaluation(client):
     history = client.get(f"/models/{mv['id']}/history").json()
     assert len(history) == 2
     assert history[1]["golden_set"]["version"] == "v2"
+
+
+def test_first_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
+    """The TRUE in-flight mirror case: the first golden set for the class
+    appears WHILE evaluate_version is still running (before its run persists),
+    so reevaluate_for_golden_set — which scans persisted runs — cannot see it.
+    Only the orchestrator's post-run recheck (`golden is None` branch) can
+    re-enqueue it. We register the set mid-run via a direct DB insert precisely
+    to bypass reevaluate_for_golden_set, then prove the recheck fired via its
+    own audit action (not the pre-existing stuck-run rescue path)."""
+    from sqlmodel import Session, select
+
+    from app.db.models import AuditEvent
+    from app.db.repositories import get_engine
+    from app.services import orchestrator
+    from tests.conftest import HEALTHY_DET
+
+    real_tier1 = orchestrator.run_tier1
+    state = {"injected": False}
+
+    def tier1_then_inject_golden(*args, **kwargs):
+        result = real_tier1(*args, **kwargs)
+        # after Tier 1 but before the run persists: land the first golden set
+        # for this class directly, without touching reevaluate_for_golden_set
+        if not state["injected"]:
+            state["injected"] = True
+            with Session(get_engine()) as s:
+                s.add(_detection_golden(name="mid-run-set", version="v1"))
+                s.commit()
+        return result
+
+    monkeypatch.setattr(orchestrator, "run_tier1", tier1_then_inject_golden)
+
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="mid-run-racer", sources=["s"])
+
+    # the recheck branch — not reevaluate_for_golden_set — must have re-enqueued it
+    with Session(get_engine()) as s:
+        actions = [
+            a.action
+            for a in s.exec(
+                select(AuditEvent).where(AuditEvent.target_ref == f"model_version:{mv['id']}")
+            ).all()
+        ]
+    assert "re-evaluation-flagged:golden-set-changed-mid-run" in actions, actions
+
+    # and the re-run scored against the mid-run set → the healthy model approves
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[0]["golden_set"]["version"] is None  # first run saw no set
+    assert history[1]["golden_set"]["version"] == "v1"  # recheck's re-run did
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "approved"
+
+
+def test_newer_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
+    """Sibling of the mirror case: a NEWER set version lands mid-run, so the run
+    scores against v1 while v2 is already latest. The `latest.id != golden.id`
+    recheck branch must re-enqueue against v2 — again invisible to
+    reevaluate_for_golden_set because the v1 run hasn't persisted yet."""
+    from sqlmodel import Session, select
+
+    from app.db.models import AuditEvent
+    from app.db.repositories import get_engine
+    from app.services import orchestrator
+    from tests.conftest import HEALTHY_DET
+
+    register_golden(client, det_manifest())  # v1 exists before submission
+    real_tier1 = orchestrator.run_tier1
+    state = {"injected": False}
+
+    def tier1_then_inject_v2(*args, **kwargs):
+        result = real_tier1(*args, **kwargs)
+        if not state["injected"]:
+            state["injected"] = True
+            with Session(get_engine()) as s:
+                s.add(_detection_golden(name="det-golden", version="v2"))
+                s.commit()
+        return result
+
+    monkeypatch.setattr(orchestrator, "run_tier1", tier1_then_inject_v2)
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="mid-run-bump", sources=["s"])
+
+    with Session(get_engine()) as s:
+        actions = [
+            a.action
+            for a in s.exec(
+                select(AuditEvent).where(AuditEvent.target_ref == f"model_version:{mv['id']}")
+            ).all()
+        ]
+    assert "re-evaluation-flagged:golden-set-changed-mid-run" in actions, actions
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[0]["golden_set"]["version"] == "v1"  # first run scored against v1
+    assert history[1]["golden_set"]["version"] == "v2"  # recheck re-ran against v2
+
+
+def test_registration_after_run_commit_is_not_enqueued_twice(client, monkeypatch):
+    """Registration in the commit-to-recheck window produces exactly one retry.
+
+    The registration recovery sees the now-persisted no-golden run and claims
+    its retry. The original run's post-commit recheck sees the same new set, but
+    must lose that claim instead of enqueueing a duplicate third run.
+    """
+    from sqlmodel import Session
+
+    from app.db.repositories import get_engine
+    from app.services import orchestrator
+    from tests.conftest import HEALTHY_DET
+
+    real_latest = orchestrator._latest_golden_set
+    state = {"calls": 0, "injected": False}
+
+    def latest_then_register(session, model_class):
+        state["calls"] += 1
+        # First call captures golden=None. The second is the post-commit
+        # recheck, so registration recovery can now see the persisted run.
+        if state["calls"] == 2 and not state["injected"]:
+            state["injected"] = True
+            with Session(get_engine(), expire_on_commit=False) as s:
+                gs = _detection_golden(name="commit-window-set", version="v1")
+                s.add(gs)
+                s.commit()
+            orchestrator.reevaluate_for_golden_set(gs)
+        return real_latest(session, model_class)
+
+    monkeypatch.setattr(orchestrator, "_latest_golden_set", latest_then_register)
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="commit-window", sources=["s"])
+
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[0]["golden_set"]["version"] is None
+    assert history[1]["golden_set"]["version"] == "v1"
+
+
+def test_orphaned_claim_is_recovered_on_startup(client, monkeypatch):
+    """A claim commits but its enqueue is lost (crash/broker outage). Because
+    claims are append-only, no later trigger can re-claim the pair — the retry
+    would be stranded forever. recover_orphaned_reevaluations (run at worker/app
+    startup) reconciles it: it re-enqueues the version whose claim has no run
+    after it, and is a no-op once that retry has run."""
+    from app.services import orchestrator
+    from tests.conftest import HEALTHY_DET
+
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="orphan", sources=["s"])
+    assert mv["status"] == "pending"  # no golden set yet → infra fail → pending
+
+    # simulate the lost enqueue: registration commits the claim (via
+    # reevaluate_for_golden_set) but the broker drops the job. A toggle (not
+    # monkeypatch.undo, which would also revert the fixture's inline-mode env)
+    # re-enables real enqueueing for the recovery step.
+    real_enqueue = orchestrator.enqueue_evaluation
+    drop = {"job": True}
+    monkeypatch.setattr(
+        orchestrator,
+        "enqueue_evaluation",
+        lambda vid: None if drop["job"] else real_enqueue(vid),
+    )
+    register_golden(client, det_manifest())
+    drop["job"] = False
+
+    # claim exists, but the retry never ran — still pending, still one run
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "pending"
+    assert len(client.get(f"/models/{mv['id']}/history").json()) == 1
+
+    # startup reconciliation reclaims the stranded retry
+    recovered = orchestrator.recover_orphaned_reevaluations()
+    assert mv["id"] in recovered
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[1]["golden_set"]["version"] == "v1"
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "approved"
+
+    # idempotent: the retry run now satisfies the claim → nothing to recover
+    assert orchestrator.recover_orphaned_reevaluations() == []
+    assert len(client.get(f"/models/{mv['id']}/history").json()) == 2

@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.db.enums import Condition, ModelClass, ModelStatus, Tier
@@ -26,6 +27,7 @@ from app.db.models import (
     Model,
     ModelCard,
     ModelVersion,
+    ReevaluationClaim,
     TierResult,
     utcnow,
 )
@@ -71,6 +73,69 @@ def _latest_golden_set(session: Session, model_class: ModelClass) -> GoldenTestS
         select(GoldenTestSet).where(GoldenTestSet.model_class == model_class)
     ).all()
     return max(sets, key=lambda s: s.registered_at) if sets else None
+
+
+def _claim_reevaluation(
+    session: Session, version_id: str, golden_set_id: str
+) -> bool:
+    """Atomically claim one automatic retry for a version/set pair."""
+    try:
+        # Keep a uniqueness collision local to the savepoint so callers can
+        # still commit their surrounding audit transaction.
+        with session.begin_nested():
+            session.add(
+                ReevaluationClaim(
+                    model_version_id=version_id,
+                    golden_set_id=golden_set_id,
+                )
+            )
+            session.flush()
+    except IntegrityError:
+        return False
+    return True
+
+
+def recover_orphaned_reevaluations() -> list[str]:
+    """Re-enqueue retries whose claim committed but whose job was lost.
+
+    `_claim_reevaluation` durably commits the claim BEFORE `enqueue_evaluation`
+    runs, so a crash or broker outage in that window leaves a claim with no job
+    — and because claims are append-only, nothing can ever re-claim that pair.
+    This reconciles that gap: any claim with no evaluation run started at/after
+    it, for a version not currently `evaluating`, is re-enqueued. It runs at
+    startup (worker boot in rq mode, app lifespan in inline mode).
+
+    Idempotent: once the retry run persists (its `started_at` lands at/after the
+    claim's `created_at`) the pair is satisfied and skipped on the next pass. A
+    benign duplicate is possible if two recoverers race a pre-existing orphan;
+    that only ever adds a run, never loses one.
+    """
+    orphaned: list[str] = []
+    with Session(get_engine()) as session:
+        claims = session.exec(select(ReevaluationClaim)).all()
+        if not claims:
+            return orphaned
+        latest_claim_at: dict[str, object] = {}
+        for c in claims:
+            prev = latest_claim_at.get(c.model_version_id)
+            if prev is None or c.created_at > prev:
+                latest_claim_at[c.model_version_id] = c.created_at
+        latest_run_at: dict[str, object] = {}
+        for r in session.exec(select(EvaluationRun)).all():
+            prev = latest_run_at.get(r.model_version_id)
+            if prev is None or r.started_at > prev:
+                latest_run_at[r.model_version_id] = r.started_at
+        for vid, claim_at in latest_claim_at.items():
+            run_at = latest_run_at.get(vid)
+            if run_at is not None and run_at >= claim_at:
+                continue  # a run happened at/after the claim → the retry ran
+            version = session.get(ModelVersion, vid)
+            if version is None or version.status is ModelStatus.evaluating:
+                continue  # version gone, or a job is already in flight
+            orphaned.append(vid)
+    for vid in orphaned:
+        enqueue_evaluation(vid)
+    return orphaned
 
 
 def evaluate_version(version_id: str) -> str | None:
@@ -201,57 +266,62 @@ def evaluate_version(version_id: str) -> str | None:
                 )
                 session.add(version)
                 session.commit()
-                return run_id
+                # fall through to the staleness recheck below — an infra run
+                # that had no golden set must still be re-queued if the first
+                # set for its class landed while it was in flight
+            else:
+                score = score_run(
+                    outcomes=outcomes,
+                    safety_breach=safety_breach,
+                    declared_sources=declared_sources,
+                )
+                run.verdict = score.verdict
+                run.flag_trigger = score.flag_trigger
+                session.add(run)
+                _persist_tier_results(session, run, outcomes, golden)
 
-            score = score_run(
-                outcomes=outcomes,
-                safety_breach=safety_breach,
-                declared_sources=declared_sources,
-            )
-            run.verdict = score.verdict
-            run.flag_trigger = score.flag_trigger
-            session.add(run)
-            _persist_tier_results(session, run, outcomes, golden)
+                new_status = status_for_verdict(score.verdict)
+                assert_transition(version.status, new_status)
+                version.status = new_status
+                session.add(version)
+                audit.record(
+                    session,
+                    actor="orchestrator",
+                    action=f"status-change:{new_status.value}",
+                    target_ref=f"model_version:{version.id}",
+                    checksum=golden.checksum if golden else None,
+                )
+                session.commit()
 
-            new_status = status_for_verdict(score.verdict)
-            assert_transition(version.status, new_status)
-            version.status = new_status
-            session.add(version)
-            audit.record(
-                session,
-                actor="orchestrator",
-                action=f"status-change:{new_status.value}",
-                target_ref=f"model_version:{version.id}",
-                checksum=golden.checksum if golden else None,
-            )
-            session.commit()
-
-            _regenerate_card(session, version_id, model_name, sandbox_mode_used)
-            session.commit()
+                _regenerate_card(session, version_id, model_name, sandbox_mode_used)
+                session.commit()
     except Exception:
         # result persistence itself failed (bad results dir, permissions, full
         # disk) — never leave the version stuck `evaluating` with no run
         _reset_to_pending(version_id, "run-persistence-failure")
         raise
 
-    # a golden-set update may have landed while this run was IN FLIGHT — the
-    # candidates in reevaluate_for_golden_set are derived from persisted runs,
-    # so this run was invisible to it. Re-enqueue against the current set.
-    if golden is not None:
-        with Session(get_engine()) as session:
-            latest = _latest_golden_set(session, model_class)
-            stale = latest is not None and latest.id != golden.id
-            if stale:
-                audit.record(
-                    session,
-                    actor="orchestrator",
-                    action="re-evaluation-flagged:golden-set-updated-mid-run",
-                    target_ref=f"model_version:{version_id}",
-                    checksum=latest.checksum,
-                )
-                session.commit()
-        if stale:
-            enqueue_evaluation(version_id)
+    # A golden-set change may have landed while this run was IN FLIGHT — either
+    # a newer set replaced the one we scored against, or the FIRST set for the
+    # class appeared during a no-golden run. Both are invisible to
+    # reevaluate_for_golden_set (its candidates come from persisted runs), so
+    # re-enqueue against the now-current set. Bounded: each re-run captures the
+    # then-current set, so this stops as soon as registrations stop arriving.
+    with Session(get_engine()) as session:
+        latest = _latest_golden_set(session, model_class)
+        stale = latest is not None and (golden is None or latest.id != golden.id)
+        claimed = stale and _claim_reevaluation(session, version_id, latest.id)
+        if claimed:
+            audit.record(
+                session,
+                actor="orchestrator",
+                action="re-evaluation-flagged:golden-set-changed-mid-run",
+                target_ref=f"model_version:{version_id}",
+                checksum=latest.checksum,
+            )
+            session.commit()
+    if claimed:
+        enqueue_evaluation(version_id)
     return run_id
 
 
@@ -455,6 +525,8 @@ def reevaluate_for_golden_set(golden_set: GoldenTestSet) -> list[str]:
                 )
             ) or (vid in stuck_ids and version.status is ModelStatus.pending)
             if not eligible:
+                continue
+            if not _claim_reevaluation(session, vid, golden_set.id):
                 continue
             # status stays put until the re-run starts (approved/pending →
             # evaluating are legal transitions); the audit event records the flag

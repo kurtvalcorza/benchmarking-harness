@@ -102,6 +102,37 @@ def test_approve_requires_complete_tier_lineage(client, tmp_path):
     assert reject.status_code == 200
 
 
+def test_concurrent_decision_race_is_409_at_the_endpoint(client):
+    """Drive the IntegrityError→409 path through decide() itself: a decision
+    already exists for the run (a racing reviewer beat us), so our commit hits
+    the unique(run_id) constraint and the endpoint returns 409, not a 500."""
+    from sqlmodel import Session
+
+    from app.db.models import AdjudicationRecord
+    from app.db.repositories import get_engine
+
+    _, item = _flagged_run(client)
+    # simulate the winning reviewer's record landing between our status check
+    # and our commit (version.status left untouched, so decide()'s guard passes)
+    with Session(get_engine()) as s:
+        s.add(
+            AdjudicationRecord(
+                run_id=item["run_id"],
+                trigger="flagged",
+                reviewer="winner@example.com",
+                decision="reject",
+                rationale="got there first",
+            )
+        )
+        s.commit()
+    r = client.post(
+        f"/adjudication/{item['run_id']}/decision",
+        json={"reviewer": "loser@example.com", "decision": "reject", "rationale": "too late"},
+    )
+    assert r.status_code == 409
+    assert "already recorded" in r.text
+
+
 def test_unknown_run_404(client):
     r = client.post(
         "/adjudication/nope/decision",

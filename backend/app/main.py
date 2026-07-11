@@ -12,6 +12,13 @@ from app.db.repositories import get_engine
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     get_engine()
+    # inline mode has no worker to reclaim lost re-evaluation jobs on boot, so
+    # the app owns that reconciliation; in rq mode the worker does it instead
+    # (see worker/main.py) to avoid two processes racing the same orphan
+    from app.services.orchestrator import eval_mode, recover_orphaned_reevaluations
+
+    if eval_mode() == "inline":
+        recover_orphaned_reevaluations()
     yield
 
 

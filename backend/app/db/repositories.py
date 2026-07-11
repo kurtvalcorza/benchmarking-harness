@@ -1,8 +1,9 @@
 """Append-only enforcement + session helpers.
 
-EvaluationRun / TierResult / AdjudicationRecord / AuditEvent may be inserted but
-never updated or deleted (data-model.md 🔒, Constitution IV). Enforced globally
-via a SQLAlchemy before_flush hook, which covers every ORM-tracked mutation.
+EvaluationRun / TierResult / AdjudicationRecord / AuditEvent /
+ReevaluationClaim may be inserted but never updated or deleted (data-model.md
+🔒, Constitution IV). Enforced globally via a SQLAlchemy before_flush hook,
+which covers every ORM-tracked mutation.
 Caveat: Core-level statements (session.execute(update(...)/delete(...))) do not
 pass through the flush machinery and would bypass this guard — all persistence
 MUST go through ORM instances, never raw update/delete statements.

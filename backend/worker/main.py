@@ -8,9 +8,14 @@ import os
 from redis import Redis
 from rq import Queue, Worker
 
+from app.services.orchestrator import recover_orphaned_reevaluations
+
 
 def main() -> None:
     conn = Redis.from_url(os.environ.get("HARNESS_REDIS_URL", "redis://localhost:6379/0"))
+    # reclaim any re-evaluation whose claim committed but whose enqueue was lost
+    # to a prior crash/outage before this worker (re)started
+    recover_orphaned_reevaluations()
     worker = Worker([Queue("evaluations", connection=conn)], connection=conn)
     worker.work(with_scheduler=False)
 
