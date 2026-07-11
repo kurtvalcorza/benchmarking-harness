@@ -35,7 +35,11 @@ def run_remote(
         raise SandboxError("run_remote called without HARNESS_RUNNER_URL configured")
     token = os.environ.get("HARNESS_RUNNER_TOKEN", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    timeout = float(os.environ.get("HARNESS_RUNNER_HTTP_TIMEOUT", "3600"))
+    # A full evaluation runs THREE tiers sequentially, each bounded by the sandbox
+    # wall-clock ceiling (default 1800s), so the delegated HTTP call must allow
+    # ~3× that — matching the RQ job timeout (7200s). A shorter timeout would make
+    # a legitimately long run spuriously infra-fail while the runner is still working.
+    timeout = float(os.environ.get("HARNESS_RUNNER_HTTP_TIMEOUT", "7200"))
     try:
         resp = httpx.post(
             url.rstrip("/") + "/run",

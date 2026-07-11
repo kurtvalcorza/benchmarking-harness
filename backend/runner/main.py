@@ -13,6 +13,7 @@ no-egress sandbox (Constitution IV) as the in-process path — it simply owns th
 socket the rest of the stack must not.
 """
 
+import hmac
 import os
 
 from fastapi import FastAPI, Header, HTTPException
@@ -37,7 +38,9 @@ def _authorize(authorization: str | None) -> None:
         # on the network drive host-socket execution
         raise HTTPException(503, "runner not configured (HARNESS_RUNNER_TOKEN unset)")
     presented = (authorization or "").removeprefix("Bearer ").strip()
-    if presented != expected:
+    # constant-time compare: this secret gates host-socket execution, so avoid a
+    # timing side-channel that could leak it byte-by-byte
+    if not hmac.compare_digest(presented, expected):
         raise HTTPException(401, "invalid runner token")
 
 
