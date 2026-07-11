@@ -1,0 +1,36 @@
+# Provisional POC thresholds (spec Assumptions; ratified by governance later).
+# An unset or `ratified: false` threshold routes the affected verdict to
+# pending_adjudication (FR-012b) — it never silently passes.
+#
+# Tier keys: capability | domain_stress | operational_safety
+detection:
+  capability:
+    metric: map_50_95
+    minimum: 0.25
+    ratified: true
+  domain_stress:
+    metric: map_50_95
+    minimum: 0.20
+    ratified: true
+  operational_safety:
+    metric: grounding_score
+    minimum: 0.30
+    ratified: true
+
+classification:
+  capability:
+    metric: top1
+    minimum: 0.60
+    ratified: true
+  domain_stress:
+    metric: top1
+    minimum: 0.50
+    ratified: true
+  operational_safety:
+    metric: grounding_score
+    minimum: 0.30
+    ratified: true
+
+# segmentation / pose / lane / face: registered in the benchmark registry but
+# thresholds deliberately unset → any run lands in pending_adjudication until
+# governance ratifies values (FR-006, FR-012b, FR-025).

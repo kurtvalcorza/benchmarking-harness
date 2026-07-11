@@ -1,0 +1,10 @@
+{
+  "kind": "stub-model",
+  "task": "detection",
+  "skill": 0.9,
+  "class_skill": {"pedestrian": 0.35},
+  "brightness_sensitivity": 1.0,
+  "grounding": 0.45,
+  "param_count": 88000000,
+  "note": "Owned synthetic demo weights (Constitution II). Deliberately weak on the safety-critical pedestrian class — the adjudication-gate demo (quickstart Scenario B)."
+}

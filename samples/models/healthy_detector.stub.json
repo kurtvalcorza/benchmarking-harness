@@ -1,0 +1,10 @@
+{
+  "kind": "stub-model",
+  "task": "detection",
+  "skill": 0.97,
+  "class_skill": {},
+  "brightness_sensitivity": 0.35,
+  "grounding": 0.82,
+  "param_count": 3500000,
+  "note": "Owned synthetic demo weights (Constitution II). A capable detector, mildly sensitive to adverse conditions."
+}

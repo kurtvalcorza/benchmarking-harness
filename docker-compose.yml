@@ -1,0 +1,73 @@
+# T004 — api + worker + redis.
+#
+# State/data live in BIND MOUNTS (./.state, ./data), not named volumes, because
+# the worker launches sandbox containers via the HOST docker daemon
+# (/var/run/docker.sock): the daemon resolves bind-mount sources on the host,
+# so every path the sandbox needs must exist on the host and be translated via
+# HARNESS_HOSTPATH_MAP (see engine/sandbox/runner.py::_host_path).
+#
+# Register datasets with CONTAINER paths, e.g.:
+#   python scripts/seed_demo.py --data-ref /srv/samples/golden/det-golden
+#   python scripts/register_golden_set.py --class detection \
+#     --data /srv/data/benchmarks/open-images-det-sample --license cc-by-4.0
+#
+# Windows note (F8): ${PWD} expands to a C:/... path the WSL-hosted daemon
+# (Docker/Rancher Desktop) cannot resolve — /c/... silently mounts EMPTY.
+# Override HARNESS_HOSTPATH_MAP with daemon-visible /mnt/c/... paths in a
+# gitignored docker-compose.override.yml on such hosts.
+services:
+  # build-only service: gives `docker compose up/build` a reason to produce the
+  # sandbox image the worker launches evaluations in (it exits immediately)
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: docker/sandbox.Dockerfile
+    image: benchmarking-harness-sandbox:latest
+    command: ["python", "-c", "print('sandbox image built')"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "8000:8000"
+    environment: &harness-env
+      HARNESS_REDIS_URL: redis://redis:6379/0
+      HARNESS_DATABASE_URL: sqlite:////srv/state/harness.db
+      HARNESS_DATA_DIR: /srv/data
+      HARNESS_ARTIFACTS_DIR: /srv/state/artifacts
+      HARNESS_RESULTS_DIR: /srv/state/results
+    volumes:
+      - ./.state:/srv/state
+      - ./data:/srv/data
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["python", "-m", "worker.main"]
+    environment:
+      <<: *harness-env
+      # explicit docker mode: fail loudly (infra_ok=false) if the daemon is
+      # unusable instead of silently downgrading to the subprocess fallback
+      HARNESS_SANDBOX_MODE: docker
+      HARNESS_SANDBOX_IMAGE: benchmarking-harness-sandbox:latest
+      HARNESS_SANDBOX_WORKDIR: /srv/state/sandbox
+      HARNESS_HOSTPATH_MAP: "/srv/backend=${PWD}/backend;/srv/state=${PWD}/.state;/srv/data=${PWD}/data;/srv/samples=${PWD}/samples"
+    volumes:
+      - ./.state:/srv/state
+      - ./data:/srv/data
+      - /var/run/docker.sock:/var/run/docker.sock  # sandbox containers (no-egress)
+    depends_on:
+      redis:
+        condition: service_started
+      sandbox-image:
+        condition: service_completed_successfully
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
