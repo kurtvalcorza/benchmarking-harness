@@ -80,13 +80,13 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 - [x] T029 [P] [US2] **[test-first]** Add complete/missing/duplicate/unexpected classification fixtures in `backend/tests/unit/test_classification_coverage.py`
 - [x] T030 [P] [US2] **[test-first]** Add NaN/infinite/malformed prediction validation tests in `backend/tests/unit/test_prediction_validation.py`
-- [ ] T031 [P] [US2] **[test-first]** Add deterministic direct-COCO reference comparison fixtures in `backend/tests/unit/test_detection_coco.py`
+- [x] T031 [P] [US2] **[test-first]** Add deterministic direct-COCO reference comparison fixtures in `backend/tests/unit/test_detection_coco.py`
 - [x] T032 [US2] Implement reusable prediction coverage/shape validation and typed issue codes in `backend/engine/metrics/coverage.py`
 - [x] T033 [US2] Rewrite classification evaluation around expected annotation IDs and missing-as-incorrect semantics in `backend/engine/metrics/classification.py`
-- [ ] T034 [US2] Replace COCO-named detection approximation with pinned pycocotools evaluation and deterministically mapped inputs in `backend/engine/metrics/detection.py`
-- [ ] T035 [US2] Rename any retained lightweight diagnostic metric and migrate thresholds/cards from ambiguous `map_50_95` naming in `backend/thresholds.yaml`, `backend/engine/scoring.py`, and `backend/engine/cards/templates/model_card.md.j2`
+- [x] T034 [US2] Replace COCO-named detection approximation with pinned pycocotools evaluation and deterministically mapped inputs in `backend/engine/metrics/detection.py`
+- [x] T035 [US2] Rename any retained lightweight diagnostic metric and migrate thresholds/cards from ambiguous `map_50_95` naming in `backend/thresholds.yaml`, `backend/engine/scoring.py`, and `backend/engine/cards/templates/model_card.md.j2`
 - [x] T036 [US2] Add coverage/evaluator provenance to `TierOutcome`, Tier 1, Tier 2, persistence, and API schemas in `backend/engine/tiers/tier1_capability.py`, `backend/engine/tiers/tier2_stress.py`, `backend/app/services/orchestrator.py`, and `backend/app/api/schemas.py`
-- [ ] T037 [US2] Display coverage discrepancies and evaluator identity in `frontend/src/pages/ModelDetail.tsx` and add tests in `frontend/tests/model-detail.test.tsx`
+- [x] T037 [US2] Display coverage discrepancies and evaluator identity in `frontend/src/pages/ModelDetail.tsx` and add tests in `frontend/tests/model-detail.test.tsx`
 - [x] T038 [US2] Add end-to-end regression proving omitted predictions cannot improve a verdict in `backend/tests/integration/test_metric_integrity.py`
 
 **Checkpoint**: metric names, denominators, and evaluator evidence are defensible and reproducible.
@@ -117,20 +117,20 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Independent Test**: Fault injection at card/evidence/commit/dispatch boundaries and duplicated job delivery.
 
-- [ ] T046 [P] [US4] **[test-first]** Add evaluation card-render/evidence/commit fault tests in `backend/tests/integration/test_atomic_completion.py`
-- [ ] T047 [P] [US4] **[test-first]** Add adjudication card-render/commit fault tests in `backend/tests/integration/test_atomic_adjudication.py`
-- [ ] T048 [P] [US4] **[test-first]** Add Redis outage/recovery and duplicate-delivery tests in `backend/tests/integration/test_durable_dispatch.py`
-- [ ] T049 [P] [US4] **[test-first]** Add concurrent dispatcher/worker claim tests against PostgreSQL in `backend/tests/integration/test_job_claims.py`
-- [ ] T050 [US4] Refactor Model Card generation to render from explicit transaction-local inputs in `backend/engine/cards/generator.py`
-- [ ] T051 [US4] Add temporary evidence staging, digesting, atomic publish, and compensation in `backend/app/services/evidence_store.py`
-- [ ] T052 [US4] Refactor evaluation completion into one database transaction for run/tiers/status/audit/card/job in `backend/app/services/orchestrator.py`
-- [ ] T053 [US4] Refactor adjudication into one transaction for decision/status/audit/card in `backend/app/api/adjudication.py`
-- [ ] T054 [US4] Implement JobIntent creation/idempotency repository operations in `backend/app/db/repositories.py` and `backend/app/services/jobs.py`
-- [ ] T055 [US4] Create evaluation intents in submission, Golden Set registration, and mid-run staleness flows in `backend/app/api/models.py`, `backend/app/api/golden_sets.py`, and `backend/app/services/orchestrator.py`
-- [ ] T056 [US4] Implement PostgreSQL leased outbox dispatcher with retry/backoff in `backend/app/services/dispatcher.py`
-- [ ] T057 [US4] Update RQ worker to claim/finalize intents idempotently and make duplicate delivery a no-op in `backend/worker/main.py`
-- [ ] T058 [US4] Route inline test/demo execution through the same intent/claim code in `backend/app/services/jobs.py`
-- [ ] T059 [US4] Add orphaned-evidence and stuck-intent operational diagnostics in `backend/app/services/reconciliation.py` and authenticated readiness output
+- [x] T046 [P] [US4] **[test-first]** Add evaluation card-render/evidence/commit fault tests in `backend/tests/integration/test_atomic_completion.py`
+- [x] T047 [P] [US4] **[test-first]** Add adjudication card-render/commit fault tests in `backend/tests/integration/test_atomic_adjudication.py`
+- [x] T048 [P] [US4] **[test-first]** Add Redis outage/recovery and duplicate-delivery tests in `backend/tests/integration/test_durable_dispatch.py`
+- [x] T049 [P] [US4] **[test-first]** Add concurrent dispatcher/worker claim tests against PostgreSQL in `backend/tests/integration/test_job_claims.py`
+- [x] T050 [US4] Refactor Model Card generation to render from explicit transaction-local inputs in `backend/engine/cards/generator.py`
+- [x] T051 [US4] Add temporary evidence staging, digesting, atomic publish, and compensation in `backend/app/services/evidence_store.py`
+- [x] T052 [US4] Refactor evaluation completion into one database transaction for run/tiers/status/audit/card/job in `backend/app/services/orchestrator.py`
+- [x] T053 [US4] Refactor adjudication into one transaction for decision/status/audit/card in `backend/app/api/adjudication.py`
+- [x] T054 [US4] Implement JobIntent creation/idempotency repository operations in `backend/app/db/repositories.py` and `backend/app/services/jobs.py`
+- [x] T055 [US4] Create evaluation intents in submission, Golden Set registration, and mid-run staleness flows in `backend/app/api/models.py`, `backend/app/api/golden_sets.py`, and `backend/app/services/orchestrator.py`
+- [x] T056 [US4] Implement PostgreSQL leased outbox dispatcher with retry/backoff in `backend/app/services/dispatcher.py`
+- [x] T057 [US4] Update RQ worker to claim/finalize intents idempotently and make duplicate delivery a no-op in `backend/worker/main.py`
+- [x] T058 [US4] Route inline test/demo execution through the same intent/claim code in `backend/app/services/jobs.py`
+- [x] T059 [US4] Add orphaned-evidence and stuck-intent operational diagnostics in `backend/app/services/reconciliation.py` and authenticated readiness output
 
 **Checkpoint**: no dual-write queue gap and no completed/approved state without its current card.
 
@@ -142,14 +142,14 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Independent Test**: Valid evidence passes; confidence-only, scalar-only, malformed, and insufficient evidence cannot pass.
 
-- [ ] T060 [P] [US5] **[test-first]** Add GroundingEvidence schema/validation cases in `backend/tests/unit/test_grounding_evidence.py`
-- [ ] T061 [P] [US5] **[test-first]** Add confidence-only and insufficient-sample Tier 3 regressions in `backend/tests/integration/test_tier3_grounding.py`
-- [ ] T062 [US5] Add typed attribution/grounding output contract to `backend/engine/adapters/base.py` and `backend/engine/sandbox/job.py`
-- [ ] T063 [US5] Implement approved-method registry and pointing-game/energy localization evaluator in `backend/engine/metrics/grounding.py`
-- [ ] T064 [US5] Remove confidence-coverage fallback and enforce measured/unavailable semantics in `backend/engine/tiers/tier3_ops.py`
-- [ ] T065 [US5] Update stub fixtures/adapters to emit reproducible evidence objects rather than an unverified scalar in `backend/engine/adapters/stub_adapter.py` and `samples/models/*.stub.json`
-- [ ] T066 [US5] Record grounding method/sample/target/evidence in Tier 3 evidence and Model Cards in `backend/app/services/orchestrator.py` and `backend/engine/cards/templates/model_card.md.j2`
-- [ ] T067 [US5] Show measured versus unavailable grounding explicitly in `frontend/src/pages/ModelDetail.tsx` and `frontend/tests/model-detail.test.tsx`
+- [x] T060 [P] [US5] **[test-first]** Add GroundingEvidence schema/validation cases in `backend/tests/unit/test_grounding_evidence.py`
+- [x] T061 [P] [US5] **[test-first]** Add confidence-only and insufficient-sample Tier 3 regressions in `backend/tests/integration/test_tier3_grounding.py`
+- [x] T062 [US5] Add typed attribution/grounding output contract to `backend/engine/adapters/base.py` and `backend/engine/sandbox/job.py`
+- [x] T063 [US5] Implement approved-method registry and pointing-game/energy localization evaluator in `backend/engine/metrics/grounding.py`
+- [x] T064 [US5] Remove confidence-coverage fallback and enforce measured/unavailable semantics in `backend/engine/tiers/tier3_ops.py`
+- [x] T065 [US5] Update stub fixtures/adapters to emit reproducible evidence objects rather than an unverified scalar in `backend/engine/adapters/stub_adapter.py` and `samples/models/*.stub.json`
+- [x] T066 [US5] Record grounding method/sample/target/evidence in Tier 3 evidence and Model Cards in `backend/app/services/orchestrator.py` and `backend/engine/cards/templates/model_card.md.j2`
+- [x] T067 [US5] Show measured versus unavailable grounding explicitly in `frontend/src/pages/ModelDetail.tsx` and `frontend/tests/model-detail.test.tsx`
 
 **Checkpoint**: confidence is never represented or thresholded as interpretability.
 
@@ -162,12 +162,12 @@ description: "Test-first implementation tasks for production hardening and evalu
 **Independent Test**: Fresh/baseline migration, malicious sandbox probe, dependency gates, and authenticated browser flow.
 
 - [x] T068 [P] [US6] **[test-first]** Extend sandbox config assertions for user/capabilities/no-new-privileges/seccomp/mount roots in `backend/tests/contract/test_sandbox_hardening.py`
-- [ ] T069 [P] [US6] **[test-first]** Add live runtime probes for UID/capabilities/write/network/PID/memory/timeout controls in `backend/tests/integration/test_sandbox_runtime.py`
+- [x] T069 [P] [US6] **[test-first]** Add live runtime probes for UID/capabilities/write/network/PID/memory/timeout controls in `backend/tests/integration/test_sandbox_runtime.py`
 - [x] T070 [US6] Add non-root sandbox user, pinned dependencies, and minimal writable paths in `docker/sandbox.Dockerfile`
 - [x] T071 [US6] Add `cap_drop=ALL`, no-new-privileges, seccomp, non-root user, bounded tmpfs/output, and effective-config evidence in `backend/engine/sandbox/runner.py` and `docker/sandbox-seccomp.json`
-- [ ] T072 [US6] Validate artifact/dataset/output paths against allowlisted resolved roots in `backend/engine/sandbox/runner.py`
-- [ ] T073 [US6] Separate runtime authority into a dedicated runner service/rootless-or-proxy boundary in `docker-compose.yml`, `backend/app/services/runner_client.py`, and `backend/runner/main.py`
-- [ ] T074 [US6] Ensure API/general worker containers have no unrestricted runtime socket and document production runner requirements in `README.md` and `specs/002-production-hardening/quickstart.md`
+- [x] T072 [US6] Validate artifact/dataset/output paths against allowlisted resolved roots in `backend/engine/sandbox/runner.py`
+- [x] T073 [US6] Separate runtime authority into a dedicated runner service/rootless-or-proxy boundary in `docker-compose.yml`, `backend/app/services/runner_client.py`, and `backend/runner/main.py`
+- [x] T074 [US6] Ensure API/general worker containers have no unrestricted runtime socket and document production runner requirements in `README.md` and `specs/002-production-hardening/quickstart.md`
 - [x] T075 [P] [US6] Add browser OIDC provider/session handling and bearer API client in `frontend/src/auth/`, `frontend/src/api/client.ts`, and `frontend/src/main.tsx`
 - [x] T076 [P] [US6] Remove free-text reviewer UI and display verified signed-in identity in `frontend/src/pages/Review.tsx` and `frontend/tests/review.test.tsx`
 - [x] T077 [US6] Add role-aware routes and authorization error states in `frontend/src/main.tsx`, `frontend/src/pages/Submit.tsx`, and `frontend/src/pages/AdjudicationQueue.tsx`
@@ -178,14 +178,14 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 ## Phase 9: Cross-cutting validation and documentation
 
-- [ ] T078 [P] Update API and operator documentation in `README.md`, `DATASETS.md`, and `specs/002-production-hardening/contracts/openapi.yaml`
-- [ ] T079 [P] Add Feature 002 threat model and advisory exception template in `docs/security/threat-model.md` and `docs/security/advisory-exception.md`
-- [ ] T080 Create a Feature 001 database migration dry-run/rollback runbook in `docs/operations/migrations.md`
-- [ ] T081 Create queue outage, stuck intent, evidence reconciliation, and runner outage runbook in `docs/operations/recovery.md`
-- [ ] T082 Run all quickstart scenarios and record exact results in `specs/002-production-hardening/validation.md`
-- [ ] T083 Generate FR-001..FR-030 -> tests/tasks traceability and resolve every gap in `specs/002-production-hardening/validation.md`
-- [ ] T084 Run Spec Kit cross-artifact analysis against `spec.md`, `plan.md`, `data-model.md`, `contracts/`, and `tasks.md`; record zero unresolved critical inconsistencies in `specs/002-production-hardening/validation.md`
-- [ ] T085 Run all backend/frontend/Constitution/dependency/migration/sandbox gates and attach the final command record to `specs/002-production-hardening/validation.md`
+- [x] T078 [P] Update API and operator documentation in `README.md`, `DATASETS.md`, and `specs/002-production-hardening/contracts/openapi.yaml`
+- [x] T079 [P] Add Feature 002 threat model and advisory exception template in `docs/security/threat-model.md` and `docs/security/advisory-exception.md`
+- [x] T080 Create a Feature 001 database migration dry-run/rollback runbook in `docs/operations/migrations.md`
+- [x] T081 Create queue outage, stuck intent, evidence reconciliation, and runner outage runbook in `docs/operations/recovery.md`
+- [x] T082 Run all quickstart scenarios and record exact results in `specs/002-production-hardening/validation.md`
+- [x] T083 Generate FR-001..FR-030 -> tests/tasks traceability and resolve every gap in `specs/002-production-hardening/validation.md`
+- [x] T084 Run Spec Kit cross-artifact analysis against `spec.md`, `plan.md`, `data-model.md`, `contracts/`, and `tasks.md`; record zero unresolved critical inconsistencies in `specs/002-production-hardening/validation.md`
+- [x] T085 Run all backend/frontend/Constitution/dependency/migration/sandbox gates and attach the final command record to `specs/002-production-hardening/validation.md`
 
 ## Dependencies & execution order
 
