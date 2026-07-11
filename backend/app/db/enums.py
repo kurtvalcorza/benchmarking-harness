@@ -45,4 +45,46 @@ class Decision(str, Enum):
     request_changes = "request_changes"
 
 
+class Role(str, Enum):
+    """Authorization roles (security-boundary.md). A principal may hold several."""
+
+    submitter = "submitter"
+    governance = "governance"
+    adjudicator = "adjudicator"
+    auditor = "auditor"
+
+
+class JobKind(str, Enum):
+    evaluate_model_version = "evaluate_model_version"
+
+
+class JobReason(str, Enum):
+    submission = "submission"
+    golden_set_update = "golden_set_update"
+    mid_run_staleness = "mid_run_staleness"
+    operator_retry = "operator_retry"
+
+
+class JobState(str, Enum):
+    pending = "pending"
+    dispatching = "dispatching"
+    dispatched = "dispatched"
+    claimed = "claimed"
+    completed = "completed"
+    failed = "failed"
+
+
+class JobOutcome(str, Enum):
+    claimed = "claimed"
+    duplicate = "duplicate"
+    completed = "completed"
+    retryable_failure = "retryable_failure"
+    terminal_failure = "terminal_failure"
+
+
+class GroundingStatus(str, Enum):
+    measured = "measured"
+    unavailable = "unavailable"
+
+
 TIER_ORDER: list[Tier] = [Tier.capability, Tier.domain_stress, Tier.operational_safety]

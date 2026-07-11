@@ -16,13 +16,13 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Purpose**: Establish locked dependencies, configuration, and CI scaffolding used by all stories.
 
-- [ ] T001 Add Python production/dev/security dependencies and generate a reproducible `uv.lock` from `backend/pyproject.toml` and repository root configuration
+- [x] T001 Add Python production/dev/security dependencies and generate a reproducible `uv.lock` from `backend/pyproject.toml` and repository root configuration
 - [ ] T002 [P] Upgrade supported Vite/Vitest and regenerate `frontend/package-lock.json`; record resolved versions in `specs/002-production-hardening/validation.md`
-- [ ] T003 [P] Add typed environment configuration (environment, auth, upload, DB, queue, runner, grounding) in `backend/app/services/config.py`
-- [ ] T004 [P] Add configuration unit tests, including production fail-closed combinations, in `backend/tests/unit/test_config.py`
-- [ ] T005 Add `pip-audit`, `npm audit --audit-level=high` (the FR-027 high/critical gate, not bare `npm audit`), lockfile verification, OpenAPI validation, and migration tests to `.github/workflows/ci.yml` and `Makefile`
-- [ ] T006 Pin GitHub Actions to immutable SHAs with release comments in `.github/workflows/ci.yml`, `.github/workflows/claude.yml`, and `.github/workflows/claude-code-review.yml`
-- [ ] T007 Pin API/sandbox base images and install from locked inputs in `docker/api.Dockerfile` and `docker/sandbox.Dockerfile`
+- [x] T003 [P] Add typed environment configuration (environment, auth, upload, DB, queue, runner, grounding) in `backend/app/services/config.py`
+- [x] T004 [P] Add configuration unit tests, including production fail-closed combinations, in `backend/tests/unit/test_config.py`
+- [x] T005 Add `pip-audit`, `npm audit --audit-level=high` (the FR-027 high/critical gate, not bare `npm audit`), lockfile verification, OpenAPI validation, and migration tests to `.github/workflows/ci.yml` and `Makefile`
+- [x] T006 Pin GitHub Actions to immutable SHAs with release comments in `.github/workflows/ci.yml`, `.github/workflows/claude.yml`, and `.github/workflows/claude-code-review.yml`
+- [x] T007 Pin API/sandbox base images and install from locked inputs in `docker/api.Dockerfile` and `docker/sandbox.Dockerfile`
 
 **Checkpoint**: clean installs are reproducible and security gates exist before feature behavior changes.
 
@@ -32,24 +32,24 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Purpose**: Blocking prerequisites for every user story.
 
-- [ ] T008 [P] **[test-first]** Add empty-database and Feature 001 baseline migration tests in `backend/tests/migration/test_upgrade.py`
-- [ ] T009 [P] **[test-first]** Add production stale/unknown-schema startup tests in `backend/tests/contract/test_schema_readiness.py`
-- [ ] T010 Configure Alembic in `backend/alembic.ini`, `backend/migrations/env.py`, and `backend/migrations/script.py.mako`
-- [ ] T011 Create Feature 001 baseline migration in `backend/migrations/versions/0001_feature_001_baseline.py`
-- [ ] T012 Extend SQLModel entities for receipts, coverage/evaluator fields, job intents/attempts, and audit identity in `backend/app/db/models.py`
-- [ ] T013 Create Feature 002 schema/backfill migration in `backend/migrations/versions/0002_production_hardening.py`
-- [ ] T014 Replace production `create_all` startup with schema-revision checks while preserving explicit ephemeral-test setup in `backend/app/db/repositories.py`, `backend/app/main.py`, and `backend/app/services/schema_check.py`
-- [ ] T014a Add the `postgres` service and a `production` Compose profile (grouping `postgres`, `redis`, and the runner boundary added in T073) to `docker-compose.yml` and `.env.example`, so the migration and outage validation commands in `quickstart.md` are runnable
-- [ ] T015 [P] Add PostgreSQL test fixtures and transactional cleanup in `backend/tests/conftest_postgres.py`
-- [ ] T016 [P] **[test-first]** Add JWT issuer/audience/algorithm/time/JWKS rotation tests in `backend/tests/unit/test_auth_tokens.py`
-- [ ] T017 [P] **[test-first]** Add endpoint `401`/`403` role-matrix tests in `backend/tests/contract/test_authorization.py`
-- [ ] T018 Implement typed `Principal`, OIDC discovery/JWKS cache, token validation, and role mapping in `backend/app/services/auth.py`
-- [ ] T019 Implement FastAPI bearer/role/object-authorization dependencies in `backend/app/api/auth.py`
-- [ ] T020 Protect all non-health routers and add authenticated readiness in `backend/app/main.py`, `backend/app/api/models.py`, `backend/app/api/runs.py`, `backend/app/api/golden_sets.py`, and `backend/app/api/adjudication.py`
-- [ ] T020a **[test-first]** Reject Golden Set registration whose `data_ref` does not resolve beneath the configured data/sample roots (path containment after symlink resolution, `422`) in `backend/app/api/golden_sets.py`, with tests in `backend/tests/contract/test_golden_set_path_containment.py` — enforce at registration, not only in the runner (T072)
-- [ ] T020b Add the governance/auditor-scoped `GET /golden-sets/{id}` re-evaluation-status read (object-scoped to the requester's own registrations) in `backend/app/api/golden_sets.py`, with authorization tests in `backend/tests/contract/test_authorization.py`
-- [ ] T021 Propagate authenticated actor/issuer/request ID into sanitized audit records in `backend/app/services/audit.py` and route handlers
-- [ ] T022 Add explicit dev-token helper and production-mode refusal in `scripts/dev_token.py` and `backend/tests/contract/test_dev_auth_refusal.py`
+- [x] T008 [P] **[test-first]** Add empty-database and Feature 001 baseline migration tests in `backend/tests/migration/test_upgrade.py`
+- [x] T009 [P] **[test-first]** Add production stale/unknown-schema startup tests in `backend/tests/contract/test_schema_readiness.py`
+- [x] T010 Configure Alembic in `backend/alembic.ini`, `backend/migrations/env.py`, and `backend/migrations/script.py.mako`
+- [x] T011 Create Feature 001 baseline migration in `backend/migrations/versions/0001_feature_001_baseline.py`
+- [x] T012 Extend SQLModel entities for receipts, coverage/evaluator fields, job intents/attempts, and audit identity in `backend/app/db/models.py`
+- [x] T013 Create Feature 002 schema/backfill migration in `backend/migrations/versions/0002_production_hardening.py`
+- [x] T014 Replace production `create_all` startup with schema-revision checks while preserving explicit ephemeral-test setup in `backend/app/db/repositories.py`, `backend/app/main.py`, and `backend/app/services/schema_check.py`
+- [x] T014a Add the `postgres` service and a `production` Compose profile (grouping `postgres`, `redis`, and the runner boundary added in T073) to `docker-compose.yml` and `.env.example`, so the migration and outage validation commands in `quickstart.md` are runnable
+- [x] T015 [P] Add PostgreSQL test fixtures and transactional cleanup in `backend/tests/conftest_postgres.py`
+- [x] T016 [P] **[test-first]** Add JWT issuer/audience/algorithm/time/JWKS rotation tests in `backend/tests/unit/test_auth_tokens.py`
+- [x] T017 [P] **[test-first]** Add endpoint `401`/`403` role-matrix tests in `backend/tests/contract/test_authorization.py`
+- [x] T018 Implement typed `Principal`, OIDC discovery/JWKS cache, token validation, and role mapping in `backend/app/services/auth.py`
+- [x] T019 Implement FastAPI bearer/role/object-authorization dependencies in `backend/app/api/auth.py`
+- [x] T020 Protect all non-health routers and add authenticated readiness in `backend/app/main.py`, `backend/app/api/models.py`, `backend/app/api/runs.py`, `backend/app/api/golden_sets.py`, and `backend/app/api/adjudication.py`
+- [x] T020a **[test-first]** Reject Golden Set registration whose `data_ref` does not resolve beneath the configured data/sample roots (path containment after symlink resolution, `422`) in `backend/app/api/golden_sets.py`, with tests in `backend/tests/contract/test_golden_set_path_containment.py` — enforce at registration, not only in the runner (T072)
+- [x] T020b Add the governance/auditor-scoped `GET /golden-sets/{id}` re-evaluation-status read (object-scoped to the requester's own registrations) in `backend/app/api/golden_sets.py`, with authorization tests in `backend/tests/contract/test_authorization.py`
+- [x] T021 Propagate authenticated actor/issuer/request ID into sanitized audit records in `backend/app/services/audit.py` and route handlers
+- [x] T022 Add explicit dev-token helper and production-mode refusal in `scripts/dev_token.py` and `backend/tests/contract/test_dev_auth_refusal.py`
 
 **Checkpoint**: migrated storage and verified principals are available; all protected routes fail closed.
 
@@ -61,12 +61,12 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Independent Test**: Role-matrix contract suite plus an adjudication verifying token subject overrides/rejects any supplied reviewer field.
 
-- [ ] T023 [P] [US1] **[test-first]** Add submitter ownership read tests in `backend/tests/contract/test_model_access.py`
-- [ ] T024 [P] [US1] **[test-first]** Add authenticated adjudicator identity and forbidden `reviewer` property tests in `backend/tests/contract/test_adjudication_identity.py`
-- [ ] T025 [US1] Persist `submitted_by` and enforce own-object reads in `backend/app/api/models.py`, `backend/app/api/runs.py`, and `backend/app/db/models.py`
-- [ ] T026 [US1] Remove reviewer from `DecisionIn`, derive it from `Principal`, and atomically record issuer/subject in `backend/app/api/schemas.py` and `backend/app/api/adjudication.py`
-- [ ] T027 [US1] Require governance/adjudicator/auditor permissions according to `contracts/security-boundary.md` in all API handlers
-- [ ] T028 [US1] Add allowed/denied lifecycle audit assertions in `backend/tests/integration/test_security_audit.py`
+- [x] T023 [P] [US1] **[test-first]** Add submitter ownership read tests in `backend/tests/contract/test_model_access.py`
+- [x] T024 [P] [US1] **[test-first]** Add authenticated adjudicator identity and forbidden `reviewer` property tests in `backend/tests/contract/test_adjudication_identity.py`
+- [x] T025 [US1] Persist `submitted_by` and enforce own-object reads in `backend/app/api/models.py`, `backend/app/api/runs.py`, and `backend/app/db/models.py`
+- [x] T026 [US1] Remove reviewer from `DecisionIn`, derive it from `Principal`, and atomically record issuer/subject in `backend/app/api/schemas.py` and `backend/app/api/adjudication.py`
+- [x] T027 [US1] Require governance/adjudicator/auditor permissions according to `contracts/security-boundary.md` in all API handlers
+- [x] T028 [US1] Add allowed/denied lifecycle audit assertions in `backend/tests/integration/test_security_audit.py`
 
 **Checkpoint**: no client can self-assert reviewer identity or cross role/object boundaries.
 

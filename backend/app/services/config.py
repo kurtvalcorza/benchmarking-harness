@@ -125,7 +125,9 @@ class AppConfig:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    # config.py lives at backend/app/services/, so the repository root — where
+    # data/ and samples/ live — is four levels up.
+    return Path(__file__).resolve().parents[3]
 
 
 def load_config() -> "AppConfig":
@@ -164,8 +166,8 @@ def load_config() -> "AppConfig":
         oidc_audience=_env("HARNESS_OIDC_AUDIENCE"),
         oidc_algorithms=_env_tuple("HARNESS_OIDC_ALGORITHMS", ("RS256",)),
         oidc_jwks_url=_env("HARNESS_OIDC_JWKS_URL"),
-        dev_signing_secret=_env("HARNESS_DEV_SIGNING_SECRET", "harness-dev-insecure-secret")
-        or "harness-dev-insecure-secret",
+        dev_signing_secret=_env("HARNESS_DEV_SIGNING_SECRET", "harness-dev-insecure-secret-change-me-32b")
+        or "harness-dev-insecure-secret-change-me-32b",
         dev_token_algorithm=_env("HARNESS_DEV_TOKEN_ALG", "HS256") or "HS256",
         max_upload_bytes=_env_int("HARNESS_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
         database_url=database_url,

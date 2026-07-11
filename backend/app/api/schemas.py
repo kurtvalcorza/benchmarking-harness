@@ -86,8 +86,20 @@ class GoldenSetOut(BaseModel):
     reevaluation_flagged: list[str] = []
 
 
+class GoldenSetStatusOut(BaseModel):
+    id: str
+    name: str
+    model_class: ModelClass
+    version: str
+    checksum: str
+    evaluated_run_ids: list[str] = []
+    reevaluation_intents: list[str] = []  # model_version_ids with an open claim
+
+
 class DecisionIn(BaseModel):
-    reviewer: str = Field(min_length=1)
+    # FR-013/T026: the reviewer identity is the authenticated principal, never a
+    # client-supplied field. A `reviewer` in the body is ignored (extra keys are
+    # dropped) so no caller can self-assert who decided.
     decision: Decision
     rationale: str = Field(min_length=1)
 

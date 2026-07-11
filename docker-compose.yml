@@ -71,3 +71,25 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  # Feature 002 production dependency (T014a). Enabled only under the
+  # `production` profile so the offline SQLite demo stays zero-dependency:
+  #   docker compose --profile production up -d postgres redis
+  # Then point migrations at it (see specs/002-production-hardening/quickstart.md):
+  #   HARNESS_DATABASE_URL=postgresql+psycopg://harness:harness@localhost:5432/harness
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["production"]
+    environment:
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: harness
+      POSTGRES_DB: harness
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.state/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

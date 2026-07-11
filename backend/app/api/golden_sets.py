@@ -12,10 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.schemas import GoldenSetManifestIn, GoldenSetOut
-from app.db.models import GoldenTestSet
+from app.api.auth import get_principal, get_request_id, require_roles
+from app.api.schemas import GoldenSetManifestIn, GoldenSetOut, GoldenSetStatusOut
+from app.db.enums import Role
+from app.db.models import EvaluationRun, GoldenTestSet, ReevaluationClaim
 from app.db.repositories import get_session
 from app.services import audit
+from app.services.auth import Principal
+from app.services.config import load_config, resolves_beneath
 from app.services.orchestrator import reevaluate_for_golden_set
 from engine.datasets import Dataset, validate_dataset
 
@@ -26,7 +30,10 @@ PERMISSIVE_LICENSES = {"owned", "cc-by", "cc-by-4.0", "cc0", "mit", "apache-2.0"
 
 @router.post("/golden-sets", status_code=201, response_model=GoldenSetOut)
 def register_golden_set(
-    manifest: GoldenSetManifestIn, session: Session = Depends(get_session)
+    manifest: GoldenSetManifestIn,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(require_roles(Role.governance)),
+    request_id: str = Depends(get_request_id),
 ) -> GoldenSetOut:
     if manifest.is_public:
         raise HTTPException(
@@ -68,11 +75,18 @@ def register_golden_set(
             "data_ref is required: fetch the dataset locally (scripts/fetch_*) and register "
             "the path the API/worker can read",
         )
-    # POC trust boundary: data_ref is a server-side path supplied by the
-    # governance operator (the API has no auth yet — spec assumption OQ-5).
-    # Before production: authenticate this endpoint and confine data_ref
-    # to a configured dataset root so callers can't probe arbitrary paths.
+    # T020a: confine data_ref beneath the configured data/sample roots (after
+    # symlink resolution) so an authenticated governance caller still cannot
+    # point the harness at arbitrary host paths. Enforced here at registration,
+    # not only in the runner (T072).
     data_path = Path(manifest.data_ref)
+    cfg = load_config()
+    if not resolves_beneath(data_path, cfg.data_roots):
+        raise HTTPException(
+            422,
+            f"data_ref '{manifest.data_ref}' does not resolve beneath a configured data "
+            f"root {[str(p) for p in cfg.data_roots]} (path containment, T020a)",
+        )
     problems = validate_dataset(data_path)
     if problems:
         raise HTTPException(
@@ -102,14 +116,18 @@ def register_golden_set(
         license=manifest.license,
         is_public=False,
         data_ref=manifest.data_ref,
+        registered_by=principal.principal_key,
     )
     session.add(gs)
     audit.record(
         session,
-        actor="governance",
+        actor=principal.principal_key,
         action="golden-set-registered",
         target_ref=f"golden_set:{gs.id}",
         checksum=checksum,
+        request_id=request_id,
+        principal_issuer=principal.issuer,
+        outcome="success",
     )
     try:
         session.commit()
@@ -132,4 +150,39 @@ def register_golden_set(
         safety_critical_classes=gs.safety_critical_classes,
         recall_floors=gs.recall_floors,
         reevaluation_flagged=flagged,
+    )
+
+
+@router.get("/golden-sets/{id}", response_model=GoldenSetStatusOut)
+def get_golden_set(
+    id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+) -> GoldenSetStatusOut:
+    """T020b: governance reads its OWN registrations' re-evaluation status;
+    auditor reads any. Object-scoped per security-boundary.md."""
+    gs = session.get(GoldenTestSet, id)
+    if gs is None:
+        raise HTTPException(404, "golden set not found")
+    is_auditor = principal.has_any(Role.auditor)
+    is_owner = principal.has_any(Role.governance) and gs.registered_by == principal.principal_key
+    if not (is_auditor or is_owner):
+        raise HTTPException(
+            403, "not authorized to read this golden set's status (object scope)"
+        )
+    # runs evaluated against this set + versions with an open re-evaluation claim
+    runs = session.exec(
+        select(EvaluationRun).where(EvaluationRun.golden_set_id == gs.id)
+    ).all()
+    claims = session.exec(
+        select(ReevaluationClaim).where(ReevaluationClaim.golden_set_id == gs.id)
+    ).all()
+    return GoldenSetStatusOut(
+        id=gs.id,
+        name=gs.name,
+        model_class=gs.model_class,
+        version=gs.version,
+        checksum=gs.checksum,
+        evaluated_run_ids=[r.id for r in runs],
+        reevaluation_intents=[c.model_version_id for c in claims],
     )

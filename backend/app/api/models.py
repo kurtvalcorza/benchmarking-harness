@@ -8,16 +8,18 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.api.auth import authorize_object_read, get_principal, get_request_id, require_roles
 from app.api.schemas import (
     EvaluationRunOut,
     GoldenSetRef,
     ModelDetailOut,
     ModelVersionOut,
 )
-from app.db.enums import ModelClass
+from app.db.enums import ModelClass, Role
 from app.db.models import EvaluationRun, Model, ModelCard, ModelVersion
 from app.db.repositories import get_session
 from app.services import audit
+from app.services.auth import Principal
 from app.services.orchestrator import enqueue_evaluation
 from engine.adapters.base import SUPPORTED_FRAMEWORKS
 from engine.datasets import REPO_ROOT
@@ -40,6 +42,8 @@ async def submit_model(
     version: str = Form("v1"),
     declared_sources: list[str] = Form(default=[]),
     session: Session = Depends(get_session),
+    principal: Principal = Depends(require_roles(Role.submitter)),
+    request_id: str = Depends(get_request_id),
 ) -> ModelVersionOut:
     try:
         mc = ModelClass(model_class)
@@ -81,6 +85,7 @@ async def submit_model(
         artifact_ref="",  # set below once the id exists
         framework=framework.lower(),
         declared_sources=[s for s in declared_sources if s and s.strip()],
+        submitted_by=principal.principal_key,  # FR-001: verified identity
     )
     session.add(mv)
     session.flush()
@@ -101,9 +106,12 @@ async def submit_model(
     session.add(mv)
     audit.record(
         session,
-        actor="submitter",
+        actor=principal.principal_key,
         action="model-version-submitted",
         target_ref=f"model_version:{mv.id}",
+        request_id=request_id,
+        principal_issuer=principal.issuer,
+        outcome="success",
     )
     try:
         session.commit()
@@ -168,8 +176,13 @@ def _resolve_version(session: Session, id_: str) -> ModelVersion:
 
 
 @router.get("/models/{id}", response_model=ModelDetailOut)
-def get_model(id: str, session: Session = Depends(get_session)) -> ModelDetailOut:
+def get_model(
+    id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+) -> ModelDetailOut:
     mv = _resolve_version(session, id)
+    authorize_object_read(principal, mv, session)
     model = session.get(Model, mv.model_id)
     card = session.exec(
         select(ModelCard).where(ModelCard.model_version_id == mv.id)
@@ -190,9 +203,14 @@ def get_model(id: str, session: Session = Depends(get_session)) -> ModelDetailOu
 
 
 @router.get("/models/{id}/history", response_model=list[EvaluationRunOut])
-def get_history(id: str, session: Session = Depends(get_session)) -> list[EvaluationRunOut]:
+def get_history(
+    id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+) -> list[EvaluationRunOut]:
     """FR-016: append-only performance history across ALL versions, in order."""
     mv = _resolve_version(session, id)
+    authorize_object_read(principal, mv, session)
     versions = session.exec(
         select(ModelVersion).where(ModelVersion.model_id == mv.model_id)
     ).all()
