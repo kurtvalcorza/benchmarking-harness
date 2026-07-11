@@ -161,10 +161,10 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Independent Test**: Fresh/baseline migration, malicious sandbox probe, dependency gates, and authenticated browser flow.
 
-- [ ] T068 [P] [US6] **[test-first]** Extend sandbox config assertions for user/capabilities/no-new-privileges/seccomp/mount roots in `backend/tests/contract/test_sandbox_hardening.py`
+- [x] T068 [P] [US6] **[test-first]** Extend sandbox config assertions for user/capabilities/no-new-privileges/seccomp/mount roots in `backend/tests/contract/test_sandbox_hardening.py`
 - [ ] T069 [P] [US6] **[test-first]** Add live runtime probes for UID/capabilities/write/network/PID/memory/timeout controls in `backend/tests/integration/test_sandbox_runtime.py`
-- [ ] T070 [US6] Add non-root sandbox user, pinned dependencies, and minimal writable paths in `docker/sandbox.Dockerfile`
-- [ ] T071 [US6] Add `cap_drop=ALL`, no-new-privileges, seccomp, non-root user, bounded tmpfs/output, and effective-config evidence in `backend/engine/sandbox/runner.py` and `docker/sandbox-seccomp.json`
+- [x] T070 [US6] Add non-root sandbox user, pinned dependencies, and minimal writable paths in `docker/sandbox.Dockerfile`
+- [x] T071 [US6] Add `cap_drop=ALL`, no-new-privileges, seccomp, non-root user, bounded tmpfs/output, and effective-config evidence in `backend/engine/sandbox/runner.py` and `docker/sandbox-seccomp.json`
 - [ ] T072 [US6] Validate artifact/dataset/output paths against allowlisted resolved roots in `backend/engine/sandbox/runner.py`
 - [ ] T073 [US6] Separate runtime authority into a dedicated runner service/rootless-or-proxy boundary in `docker-compose.yml`, `backend/app/services/runner_client.py`, and `backend/runner/main.py`
 - [ ] T074 [US6] Ensure API/general worker containers have no unrestricted runtime socket and document production runner requirements in `README.md` and `specs/002-production-hardening/quickstart.md`
