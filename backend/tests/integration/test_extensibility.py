@@ -43,12 +43,20 @@ def test_classifier_evaluates_via_registry(client):
         model_class="classification",
         sources=["synthetic v1"],
     )
-    assert mv["status"] == "approved", mv
+    # US5: a whole-image classifier has no localizable target, so Tier 3 visual
+    # grounding is UNAVAILABLE (unsupported_model_class) and can never auto-pass —
+    # the run is routed to human adjudication rather than silently approved on a
+    # confidence proxy (metric-evidence.md §Forbidden substitutions).
+    assert mv["status"] == "pending_adjudication", mv
     runs = client.get(f"/models/{mv['id']}/history").json()
     run = client.get(f"/runs/{runs[0]['id']}").json()
     t1 = next(t for t in run["tier_results"] if t["tier"] == "capability")
     assert t1["metrics"]["benchmark"] == "ImageNet top-1"  # registry-selected slot
-    assert t1["metrics"]["top1"] >= 0.6
+    assert t1["metrics"]["top1"] >= 0.6  # capability itself still passes
+    t3 = next(t for t in run["tier_results"] if t["tier"] == "operational_safety")
+    assert t3["metrics"]["grounding"]["status"] == "unavailable"
+    assert t3["metrics"]["grounding"]["unavailable_reason"] == "unsupported_model_class"
+    assert t3["metrics"]["grounding_score"] is None  # never a fabricated number
 
 
 def test_is_public_true_rejected(client):

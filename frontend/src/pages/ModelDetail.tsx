@@ -155,6 +155,36 @@ function CoverageTable({ run }: { run: RunDetail }) {
   )
 }
 
+function Grounding({ run }: { run: RunDetail }) {
+  // US5/T067: show visual grounding as MEASURED (method, score, samples, target)
+  // or explicitly UNAVAILABLE — never an implied pass on a confidence proxy.
+  const t3 = run.tier_results.find((t) => t.tier === 'operational_safety')
+  const g = t3?.metrics.grounding
+  if (!g) return null
+  return (
+    <>
+      <h3>Visual grounding (Tier 3)</h3>
+      {g.status === 'measured' ? (
+        <p>
+          <span className="pill pass">measured</span> {g.method} · score{' '}
+          <strong>{g.score}</strong> over {g.sample_count} samples
+          {g.target_ref ? (
+            <span className="muted"> · target {g.target_ref.slice(0, 12)}…</span>
+          ) : null}
+          {g.evidence_digest ? (
+            <span className="muted"> · evidence {g.evidence_digest.slice(0, 12)}…</span>
+          ) : null}
+        </p>
+      ) : (
+        <p>
+          <span className="breach">unavailable</span> — {g.unavailable_reason}. Grounding could
+          not be measured, so Tier 3 cannot auto-pass; this run requires human adjudication.
+        </p>
+      )}
+    </>
+  )
+}
+
 function Degradation({ run }: { run: RunDetail }) {
   const clean = run.tier_results.find(
     (t) => t.tier === 'domain_stress' && t.condition === 'clean',
@@ -248,6 +278,7 @@ export function ModelDetail() {
           )}
           <TierTable run={run} />
           <CoverageTable run={run} />
+          <Grounding run={run} />
           <Degradation run={run} />
           <SafetyTable run={run} />
         </>

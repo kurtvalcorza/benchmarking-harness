@@ -67,11 +67,24 @@ export interface SafetyRow {
   ok: boolean
 }
 
+export interface GroundingEvidence {
+  status: 'measured' | 'unavailable'
+  method: string | null
+  evaluator_version: string | null
+  score: number | null
+  sample_count: number
+  target_ref: string | null
+  evidence_ref: string | null
+  evidence_digest: string | null
+  unavailable_reason: string | null
+}
+
 export interface TierResult {
   tier: 'capability' | 'domain_stress' | 'operational_safety'
   condition: Condition | null
   metrics: Record<string, unknown> & {
     safety_critical?: Record<string, SafetyRow>
+    grounding?: GroundingEvidence
     worst_case_drop?: {
       metric: string
       clean: number

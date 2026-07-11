@@ -61,6 +61,28 @@ const RUN: RunDetail = {
         dataset_checksum: 'abcdef01',
       },
     },
+    {
+      tier: 'operational_safety',
+      condition: null,
+      metrics: {
+        grounding_score: 0.72,
+        grounding: {
+          status: 'measured',
+          method: 'pointing_game',
+          evaluator_version: 'grounding/1',
+          score: 0.72,
+          sample_count: 51,
+          target_ref: 'abcdef0123456789',
+          evidence_ref: '/x/grounding.json',
+          evidence_digest: '0123456789abcdef',
+          unavailable_reason: null,
+        },
+      },
+      threshold: { metric: 'grounding_score', minimum: 0.3, ratified: true },
+      passed: true,
+      evidence_ref: '/x',
+      dataset_checksum: 'abcdef01',
+    },
   ],
 }
 
@@ -85,4 +107,17 @@ test('model detail surfaces prediction coverage and the reference evaluator iden
   expect(screen.getByText(/pycocotools\.cocoeval/)).toBeDefined()
   // a coverage discrepancy (2 missing) is surfaced as an incomplete verdict
   expect(screen.getByText(/incomplete/)).toBeDefined()
+})
+
+test('model detail shows measured visual grounding evidence explicitly', async () => {
+  render(
+    <MemoryRouter initialEntries={['/models/v1']}>
+      <Routes>
+        <Route path="/models/:id" element={<ModelDetail />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await waitFor(() => expect(screen.getByText(/Visual grounding/)).toBeDefined())
+  expect(screen.getByText(/measured/)).toBeDefined()
+  expect(screen.getByText(/pointing_game/)).toBeDefined()
 })

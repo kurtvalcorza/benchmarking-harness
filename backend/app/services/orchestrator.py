@@ -471,15 +471,29 @@ def _persist_tier_results(
         evaluator = dict(o.evaluator) if o.evaluator else None
         if evaluator is not None and not evaluator.get("dataset_checksum"):
             evaluator["dataset_checksum"] = dataset_checksum
+        evidence = dict(o.evidence) if o.evidence else {}
+        metrics = dict(o.metrics) if o.metrics else {}
+        # US5/T066: persist grounding attribution as its OWN content-addressed
+        # evidence artifact and stamp the measured GroundingEvidence with the
+        # resolvable evidence_ref + evidence_digest (the raw samples never live
+        # in the metrics column).
+        grounding_samples = evidence.pop("grounding_samples", None)
+        grounding = metrics.get("grounding")
+        if grounding_samples and isinstance(grounding, dict) and grounding.get("status") == "measured":
+            g_ref, g_digest = stage.stage(
+                i, f"{o.tier.value}-grounding", {"method": grounding.get("method"), "samples": grounding_samples}
+            )
+            grounding = {**grounding, "evidence_ref": g_ref, "evidence_digest": g_digest}
+            metrics["grounding"] = grounding
         payload = {
             "tier": o.tier.value,
             "condition": o.condition,
-            "metrics": o.metrics,
+            "metrics": metrics,
             "threshold": o.threshold,
             "passed": o.passed,
             "coverage": o.coverage,
             "evaluator": evaluator,
-            "evidence": o.evidence,
+            "evidence": evidence,
             "golden_set_checksum": golden.checksum if golden else None,
         }
         evidence_ref, evidence_digest = stage.stage(i, name, payload)
@@ -488,7 +502,7 @@ def _persist_tier_results(
                 run_id=run.id,
                 tier=o.tier,
                 condition=Condition(o.condition) if o.condition else None,
-                metrics=o.metrics,
+                metrics=metrics,
                 threshold=o.threshold,
                 passed=o.passed,
                 coverage=o.coverage,
@@ -532,6 +546,10 @@ def _upsert_card(
         if golden is not None and run.golden_set_id
         else None
     )
+    grounding = next(
+        (o.metrics.get("grounding") for o in outcomes if o.tier is Tier.operational_safety),
+        None,
+    )
     inputs = cards.CardInputs(
         model_name=model_name,
         verdict=run.verdict.value if run.verdict else None,
@@ -545,6 +563,7 @@ def _upsert_card(
         declared_sources=list(version.declared_sources or []),
         artifact_digest=cards.artifact_digest(version.artifact_ref),
         adjudications=[],  # a fresh run carries no adjudication yet
+        grounding=grounding,
     )
     _write_card(session, version_id, inputs)
 
@@ -597,6 +616,7 @@ def _regenerate_card(
     latest = runs[-1] if runs else None
     tier_rows: list[dict] = []
     adjudications: list[dict] = []
+    grounding: dict | None = None
     if latest:
         for tr in session.exec(select(TierResult).where(TierResult.run_id == latest.id)).all():
             tier_rows.append(
@@ -608,6 +628,8 @@ def _regenerate_card(
                     "passed": tr.passed,
                 }
             )
+            if tr.tier is Tier.operational_safety and isinstance(tr.metrics, dict):
+                grounding = tr.metrics.get("grounding")
         for adj in session.exec(
             select(AdjudicationRecord).where(AdjudicationRecord.run_id == latest.id)
         ).all():
@@ -657,6 +679,7 @@ def _regenerate_card(
         declared_sources=list(version.declared_sources or []),
         artifact_digest=cards.artifact_digest(version.artifact_ref),
         adjudications=adjudications,
+        grounding=grounding,
     )
     _write_card(session, version_id, inputs)
 
