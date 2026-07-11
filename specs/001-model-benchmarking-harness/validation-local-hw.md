@@ -153,3 +153,40 @@ for the on-hardware re-validation of those fixes).
   extension and GPU; the subprocess sandbox remains the only path for real
   weights (and since `d89f69a` needs `HARNESS_ALLOW_UNSANDBOXED_FRAMEWORKS=1`
   for them).
+
+## Second rebased-head sweep — F6 + F9 fixes validated (`2639743`)
+
+The App pushed fixes for the two findings I raised: F9 (`823c0e8`, mount the
+artifact at `/mnt/artifact/<name>`) and F6 (`2639743`, optional manifest
+`label_map` applied before Tier 1/2 scoring). Re-ran on the same hardware in
+**compose docker mode** (real no-egress sandbox, CPU inference — F5 still
+applies). Note: the persisted `.state/harness.db` had to be deleted first —
+`create_all` doesn't ALTER, so the F6 `label_map` column 500s against a
+pre-F6 DB (worth a migration note, but expected for a schema-add on a POC).
+
+Same `yolo11n.pt` (COCO vocabulary), two golden sets differing only in the
+label map:
+
+| Run | `label_map` | infra_ok | Tier-1 mAP | per-class recall |
+|---|---|---|---|---|
+| A (control) | none | **true** | **0.0** | all 0.0 |
+| B (mapped) | `person→pedestrian, car→vehicle, …` | **true** | **0.0721** | vehicle 0.81, pedestrian 0.46, traffic_sign 0.11 |
+
+- **F9 FIXED (confirmed on HW):** both runs are `infra_ok=true` with **1119
+  real predictions** produced inside the docker sandbox (card records
+  `sandbox: docker`) — the pre-`823c0e8` "not a supported model format" is
+  gone. The artifact now mounts at `/mnt/artifact/<name>`.
+- **F6 FIXED (confirmed on HW):** the *only* change between A and B is the
+  label map, and it moves the same model from mAP 0.0 / all-zero recall to
+  mAP 0.0721 with real per-class recall — canonicalization is applied to the
+  model's predictions before scoring, in both the Tier-1 benchmark
+  (dataset `manifest.json` map) and Tier-2 golden set (registered `label_map`).
+- Both runs still end `rejected` (mAP 0.0721 < the 0.25 capability floor).
+  That is a **legitimate capability verdict for yolo11n on this 200-image OI
+  slice under CPU + the POC's scoring strictness**, not a harness defect — the
+  gate is doing its job. Tuning the mAP itself (IoU/confidence/threshold) is
+  out of scope for validating F6/F9.
+
+Net: **F6 and F9 are resolved and validated on hardware.** Remaining open:
+F5 (`--gpus` for docker-mode GPU) and the minor `LABEL_CANON` cross-class
+leak; F8 is Windows/WSL-host-specific (documented + override).
