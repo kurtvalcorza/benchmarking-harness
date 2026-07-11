@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field
 from app.db.enums import Condition, Decision, ModelClass, ModelStatus, Tier, Verdict
 
 
+class ArtifactReceiptOut(BaseModel):
+    id: str
+    sha256: str
+    byte_count: int
+    original_filename: str
+
+
 class ModelVersionOut(BaseModel):
     id: str
     model_id: str
@@ -16,6 +23,7 @@ class ModelVersionOut(BaseModel):
     framework: str
     status: ModelStatus
     submitted_at: datetime
+    artifact: ArtifactReceiptOut | None = None
 
 
 class ModelDetailOut(ModelVersionOut):

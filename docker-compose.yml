@@ -38,6 +38,11 @@ services:
       HARNESS_DATA_DIR: /srv/data
       HARNESS_ARTIFACTS_DIR: /srv/state/artifacts
       HARNESS_RESULTS_DIR: /srv/state/results
+      # US3: the API enforces this on actual streamed bytes (413 when exceeded).
+      # A reverse proxy in front MUST allow at least this much: e.g. nginx
+      # `client_max_body_size 2g;` — otherwise the proxy rejects large uploads
+      # before the API can stream/hash them. Default 2 GiB.
+      HARNESS_MAX_UPLOAD_BYTES: "2147483648"
     volumes:
       - ./.state:/srv/state
       - ./data:/srv/data

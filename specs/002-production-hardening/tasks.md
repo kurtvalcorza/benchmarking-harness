@@ -99,13 +99,13 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Independent Test**: below/exactly/above limit and interrupted-stream contract tests with filesystem/database cleanup assertions.
 
-- [ ] T039 [P] [US3] **[test-first]** Add upload boundary and digest tests in `backend/tests/contract/test_upload_limits.py`
-- [ ] T040 [P] [US3] **[test-first]** Add cancellation, disk-full, invalid-extension, and cleanup tests in `backend/tests/integration/test_artifact_ingest_failures.py`
-- [ ] T041 [US3] Implement chunk-counted hashing, `.part` cleanup, type validation, and atomic finalization in `backend/app/services/artifact_ingest.py`
-- [ ] T042 [US3] Refactor `POST /models` to use ArtifactReceipt and create domain state only on successful finalization in `backend/app/api/models.py`
-- [ ] T043 [US3] Add abandoned temporary-file janitor with root containment in `backend/app/services/artifact_janitor.py`
-- [ ] T044 [US3] Surface `413`/`415`/`507`, receipt metadata, and upload limit diagnostics through `backend/app/api/schemas.py`, `backend/app/main.py`, and `specs/002-production-hardening/contracts/openapi.yaml`
-- [ ] T045 [US3] Configure matching Compose/reverse-proxy upload limit guidance in `docker-compose.yml`, `.env.example`, and `README.md`
+- [x] T039 [P] [US3] **[test-first]** Add upload boundary and digest tests in `backend/tests/contract/test_upload_limits.py`
+- [x] T040 [P] [US3] **[test-first]** Add cancellation, disk-full, invalid-extension, and cleanup tests in `backend/tests/integration/test_artifact_ingest_failures.py`
+- [x] T041 [US3] Implement chunk-counted hashing, `.part` cleanup, type validation, and atomic finalization in `backend/app/services/artifact_ingest.py`
+- [x] T042 [US3] Refactor `POST /models` to use ArtifactReceipt and create domain state only on successful finalization in `backend/app/api/models.py`
+- [x] T043 [US3] Add abandoned temporary-file janitor with root containment in `backend/app/services/artifact_janitor.py`
+- [x] T044 [US3] Surface `413`/`415`/`507`, receipt metadata, and upload limit diagnostics through `backend/app/api/schemas.py`, `backend/app/main.py`, and `specs/002-production-hardening/contracts/openapi.yaml`
+- [x] T045 [US3] Configure matching Compose/reverse-proxy upload limit guidance in `docker-compose.yml`, `.env.example`, and `README.md`
 
 **Checkpoint**: actual streamed bytes are bounded and no partial artifact can become evaluable.
 

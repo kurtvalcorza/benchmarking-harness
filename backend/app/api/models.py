@@ -10,16 +10,25 @@ from sqlmodel import Session, select
 
 from app.api.auth import authorize_object_read, get_principal, get_request_id, require_roles
 from app.api.schemas import (
+    ArtifactReceiptOut,
     EvaluationRunOut,
     GoldenSetRef,
     ModelDetailOut,
     ModelVersionOut,
 )
 from app.db.enums import ModelClass, Role
-from app.db.models import EvaluationRun, Model, ModelCard, ModelVersion
+from app.db.models import ArtifactReceipt, EvaluationRun, Model, ModelCard, ModelVersion
 from app.db.repositories import get_session
 from app.services import audit
+from app.services.artifact_ingest import (
+    StorageFull,
+    UnsupportedArtifactType,
+    UploadTooLarge,
+    finalize,
+    stage_upload,
+)
 from app.services.auth import Principal
+from app.services.config import load_config
 from app.services.orchestrator import enqueue_evaluation
 from engine.adapters.base import SUPPORTED_FRAMEWORKS
 from engine.datasets import REPO_ROOT
@@ -77,12 +86,26 @@ async def submit_model(
         )
     ).first()
     if existing:
-        raise HTTPException(422, f"version '{version}' already exists for model '{name}'")
+        # duplicate version is a conflict, not a malformed request (openapi 409)
+        raise HTTPException(409, f"version '{version}' already exists for model '{name}'")
+
+    # US3: stream the upload to a bounded, hashed `.part` BEFORE creating any
+    # domain state — memory stays O(chunk) and an oversized/interrupted upload
+    # never leaves a partial artifact.
+    cfg = load_config()
+    try:
+        staged = stage_upload(weights.file, weights.filename, framework, cfg)
+    except UploadTooLarge as e:
+        raise HTTPException(413, str(e)) from None
+    except UnsupportedArtifactType as e:
+        raise HTTPException(415, str(e)) from None
+    except StorageFull as e:
+        raise HTTPException(507, str(e)) from None
 
     mv = ModelVersion(
         model_id=model.id,
         version=version,
-        artifact_ref="",  # set below once the id exists
+        artifact_ref="",  # set below, after the artifact is finalized
         framework=framework.lower(),
         declared_sources=[s for s in declared_sources if s and s.strip()],
         submitted_by=principal.principal_key,  # FR-001: verified identity
@@ -90,20 +113,29 @@ async def submit_model(
     session.add(mv)
     session.flush()
 
-    dest = (artifacts_dir() / mv.id).resolve()
-    dest.mkdir(parents=True, exist_ok=True)
-    # the filename is client-controlled: strip any path components so an
-    # upload named "../../x" can never escape the version's artifact dir
-    safe_name = Path(weights.filename or "").name or "weights.bin"
-    artifact_path = (dest / safe_name).resolve()
-    if not artifact_path.is_relative_to(dest):
-        raise HTTPException(422, "invalid weights filename")
-    # stream to disk: real .pt/.onnx artifacts are large — never buffer the
-    # whole payload in API memory
-    with artifact_path.open("wb") as f:
-        shutil.copyfileobj(weights.file, f, length=1024 * 1024)
-    mv.artifact_ref = str(artifact_path)
+    dest_dir = artifacts_dir() / mv.id
+    final_ref = str(dest_dir / staged.original_filename)
+    receipt = ArtifactReceipt(
+        storage_ref=final_ref,
+        original_filename=staged.original_filename,
+        byte_count=staged.byte_count,
+        sha256=staged.sha256,
+        framework=framework.lower(),
+        submitted_by=principal.principal_key,
+    )
+    session.add(receipt)
+    mv.artifact_receipt_id = receipt.id
+
+    try:
+        final_path = finalize(staged, dest_dir)  # atomic move into place
+    except StorageFull as e:
+        session.rollback()
+        staged.discard()
+        raise HTTPException(507, str(e)) from None
+    mv.artifact_ref = str(final_path)
+    receipt.storage_ref = str(final_path)
     session.add(mv)
+    session.add(receipt)
     audit.record(
         session,
         actor=principal.principal_key,
@@ -112,6 +144,7 @@ async def submit_model(
         request_id=request_id,
         principal_issuer=principal.issuer,
         outcome="success",
+        metadata={"sha256": staged.sha256, "byte_count": staged.byte_count},
     )
     try:
         session.commit()
@@ -119,9 +152,10 @@ async def submit_model(
         # concurrent duplicate submission lost the race on a uniqueness
         # constraint — (model_id, version) or the Model's (name, model_class)
         session.rollback()
-        shutil.rmtree(dest, ignore_errors=True)
+        staged.discard()
+        shutil.rmtree(dest_dir, ignore_errors=True)
         raise HTTPException(
-            422,
+            409,
             f"model '{name}' version '{version}' already exists (or was submitted "
             "concurrently) — resubmit with a new version",
         ) from None
@@ -138,7 +172,7 @@ async def submit_model(
         if has_runs is None:
             session.delete(mv)
             session.commit()
-            shutil.rmtree(dest, ignore_errors=True)
+            shutil.rmtree(dest_dir, ignore_errors=True)
             raise HTTPException(
                 503, f"evaluation queue unavailable; submission rolled back — retry ({e})"
             ) from e
@@ -149,6 +183,11 @@ async def submit_model(
 
 def _version_out(session: Session, mv: ModelVersion) -> ModelVersionOut:
     model = session.get(Model, mv.model_id)
+    receipt = (
+        session.get(ArtifactReceipt, mv.artifact_receipt_id)
+        if mv.artifact_receipt_id
+        else None
+    )
     return ModelVersionOut(
         id=mv.id,
         model_id=mv.model_id,
@@ -158,6 +197,14 @@ def _version_out(session: Session, mv: ModelVersion) -> ModelVersionOut:
         framework=mv.framework,
         status=mv.status,
         submitted_at=mv.submitted_at,
+        artifact=ArtifactReceiptOut(
+            id=receipt.id,
+            sha256=receipt.sha256,
+            byte_count=receipt.byte_count,
+            original_filename=receipt.original_filename,
+        )
+        if receipt
+        else None,
     )
 
 
