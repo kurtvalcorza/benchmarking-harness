@@ -17,7 +17,7 @@ description: "Test-first implementation tasks for production hardening and evalu
 **Purpose**: Establish locked dependencies, configuration, and CI scaffolding used by all stories.
 
 - [x] T001 Add Python production/dev/security dependencies and generate a reproducible `uv.lock` from `backend/pyproject.toml` and repository root configuration
-- [ ] T002 [P] Upgrade supported Vite/Vitest and regenerate `frontend/package-lock.json`; record resolved versions in `specs/002-production-hardening/validation.md`
+- [x] T002 [P] Upgrade supported Vite/Vitest and regenerate `frontend/package-lock.json`; record resolved versions in `specs/002-production-hardening/validation.md`
 - [x] T003 [P] Add typed environment configuration (environment, auth, upload, DB, queue, runner, grounding) in `backend/app/services/config.py`
 - [x] T004 [P] Add configuration unit tests, including production fail-closed combinations, in `backend/tests/unit/test_config.py`
 - [x] T005 Add `pip-audit`, `npm audit --audit-level=high` (the FR-027 high/critical gate, not bare `npm audit`), lockfile verification, OpenAPI validation, and migration tests to `.github/workflows/ci.yml` and `Makefile`
