@@ -59,6 +59,15 @@ def run_tier1(*, framework: str, artifact: str, model_class: ModelClass, thresho
     m["benchmark"] = bench.reference
     m["dataset"] = bench.dataset
     passed, thr_dict, unratified = check_threshold(m, threshold)
+    # structurally invalid output (duplicate/unexpected/non-finite) is untrusted:
+    # it can never PASS, so a favorable duplicate ordering cannot buy an approval
+    if not coverage["valid"]:
+        passed = False
+        m["coverage_invalid"] = True
+    evaluator = metrics_mod.evaluator_provenance(model_class, harness_version=HARNESS_VERSION)
+    # Tier 1 is scored on the registry benchmark dataset, not a Golden Set — stamp
+    # ITS checksum so the provenance reproduces the actual data behind the score
+    evaluator["dataset_checksum"] = dataset.checksum()
     return TierOutcome(
         tier=Tier.capability,
         metrics=m,
@@ -66,7 +75,7 @@ def run_tier1(*, framework: str, artifact: str, model_class: ModelClass, thresho
         passed=passed,
         unratified=unratified,
         coverage=coverage,
-        evaluator=metrics_mod.evaluator_provenance(model_class, harness_version=HARNESS_VERSION),
+        evaluator=evaluator,
         evidence={
             "sandbox_mode": job.sandbox_mode,
             "timing": job.timing,

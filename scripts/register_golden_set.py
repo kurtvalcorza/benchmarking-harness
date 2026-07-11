@@ -16,6 +16,22 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "backend"))
+
+
+def _governance_token() -> str:
+    """Mint a local dev governance token (registration requires governance).
+    Requires dev auth; pass --token for a real OIDC deployment."""
+    from app.services.auth import mint_dev_token
+    from app.services.config import load_config
+
+    cfg = load_config()
+    if not cfg.dev_auth_enabled:
+        raise SystemExit(
+            "register_golden_set needs dev auth (HARNESS_AUTH_MODE=dev, non-production) "
+            "or an explicit --token; /golden-sets requires a governance bearer token."
+        )
+    return mint_dev_token("registrar", ["governance"], cfg=cfg)
 
 DEFAULTS = {
     "detection": {
@@ -61,6 +77,7 @@ def main() -> int:
         "The built-in synthetic samples are 'owned'.",
     )
     p.add_argument("--version", default="v1")
+    p.add_argument("--token", default=None, help="governance bearer token (default: minted dev token)")
     args = p.parse_args()
 
     if args.data and not args.license_:
@@ -84,10 +101,11 @@ def main() -> int:
         "data_ref": args.data if args.data else str(cfg["data"]),
         "label_map": cfg["label_map"],
     }
+    token = args.token or _governance_token()
     req = urllib.request.Request(
         f"{args.api}/golden-sets",
         data=json.dumps(manifest).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
     with urllib.request.urlopen(req) as resp:

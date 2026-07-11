@@ -18,7 +18,7 @@ def get_run(
     run_id: str,
     session: Session = Depends(get_session),
     principal: Principal = Depends(
-        require_roles(Role.governance, Role.adjudicator, Role.auditor)
+        require_roles(Role.submitter, Role.governance, Role.adjudicator, Role.auditor)
     ),
 ) -> RunDetailOut:
     run = session.get(EvaluationRun, run_id)

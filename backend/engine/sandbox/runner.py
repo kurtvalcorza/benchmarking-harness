@@ -220,6 +220,15 @@ def _run_docker(
         "out": "/mnt/out/result.json",
     }
     (out_dir / "spec.json").write_text(json.dumps(spec))
+    # the container runs as the non-root UID 65532, but this host-owned tmp out
+    # dir is 0700/worker-owned — without this the sandbox cannot traverse the
+    # bind mount to read spec.json or write result.json (docker evals would all
+    # infra-fail). The dir is ephemeral, per-run, and removed afterwards.
+    try:
+        os.chmod(out_dir, 0o777)
+        os.chmod(out_dir / "spec.json", 0o644)
+    except OSError:
+        pass
     cfg = docker_container_config(framework, artifact, model_class, dataset_root, out_dir)
     try:
         client = docker.from_env()

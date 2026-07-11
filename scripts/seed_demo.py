@@ -19,20 +19,43 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 MODELS = REPO / "samples" / "models"
+sys.path.insert(0, str(REPO / "backend"))
 
 
-def post_json(url: str, payload: dict) -> dict:
+def _auth_header(token: str | None) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def dev_token() -> str:
+    """Mint a local dev token with the roles the demo exercises (governance to
+    register the golden set, submitter to upload). Requires dev auth; the API
+    must share the default dev signing secret."""
+    from app.services.auth import mint_dev_token
+    from app.services.config import load_config
+
+    cfg = load_config()
+    if not cfg.dev_auth_enabled:
+        raise SystemExit(
+            "seed_demo needs dev auth (HARNESS_AUTH_MODE=dev, non-production); the API "
+            "requires bearer tokens. Set up OIDC and pass --token for a real deployment."
+        )
+    return mint_dev_token("demo", ["governance", "submitter", "adjudicator", "auditor"], cfg=cfg)
+
+
+def post_json(url: str, payload: dict, token: str | None = None) -> dict:
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_auth_header(token)},
         method="POST",
     )
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())
 
 
-def post_multipart(url: str, fields: dict[str, list[str] | str], file_path: Path) -> dict:
+def post_multipart(
+    url: str, fields: dict[str, list[str] | str], file_path: Path, token: str | None = None
+) -> dict:
     boundary = uuid.uuid4().hex
     parts: list[bytes] = []
     for key, values in fields.items():
@@ -56,7 +79,10 @@ def post_multipart(url: str, fields: dict[str, list[str] | str], file_path: Path
     req = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **_auth_header(token),
+        },
         method="POST",
     )
     with urllib.request.urlopen(req) as resp:
@@ -72,7 +98,10 @@ def main() -> int:
         help="golden-set dir AS SEEN BY THE API/WORKER; with docker compose pass "
         "/srv/samples/golden/det-golden (samples are baked into the image)",
     )
+    p.add_argument("--token", default=None, help="bearer token (defaults to a minted dev token)")
     args = p.parse_args()
+
+    token = args.token or dev_token()
 
     golden = post_json(
         f"{args.api}/golden-sets",
@@ -89,6 +118,7 @@ def main() -> int:
             "domain": "local-context-demo",
             "data_ref": args.data_ref,
         },
+        token=token,
     )
     print(f"golden set registered: {golden['id']} checksum {golden['checksum'][:12]}…")
 
@@ -106,6 +136,7 @@ def main() -> int:
                 "declared_sources": ["synthetic training set v1 (owned)"],
             },
             weights,
+            token=token,
         )
         print(f"submitted {name}: version {mv['id']} status {mv['status']}")
     print("open the UI: healthy → approved; weak → adjudication queue")

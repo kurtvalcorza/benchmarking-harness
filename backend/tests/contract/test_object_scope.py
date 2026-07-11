@@ -59,6 +59,18 @@ def test_governance_cannot_read_unrelated_run(client):
     assert client.get(f"/runs/{run_id}", headers=bearer("u", ["auditor"])).status_code == 200
 
 
+def test_submitter_reads_own_run_details(client):
+    """A submitter can read /runs/{id} for a run of their OWN model version, but
+    not another submitter's run (Feature 002 contract includes submitter)."""
+    _register(client)
+    alice = bearer("alice@example.com", ["submitter"])
+    bob = bearer("bob@example.com", ["submitter"])
+    mv = _submit(client, "own-run", alice)
+    run_id = client.get(f"/models/{mv['id']}/history", headers=alice).json()[0]["id"]
+    assert client.get(f"/runs/{run_id}", headers=alice).status_code == 200
+    assert client.get(f"/runs/{run_id}", headers=bob).status_code == 403
+
+
 def test_governance_can_read_run_from_its_own_registration(client):
     owner = bearer("owner@example.com", ["governance"])
     _register(client, header=owner)

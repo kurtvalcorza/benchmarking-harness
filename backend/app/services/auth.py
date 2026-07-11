@@ -150,11 +150,13 @@ def _jwks_uri(cfg: AppConfig) -> str:
 
 
 def _jwk_client(cfg: AppConfig) -> jwt.PyJWKClient:
-    uri = _jwks_uri(cfg)
-    client = _jwk_clients.get(uri)
+    # cache by issuer/config, NOT by resolved URI, so a warm client never blocks
+    # the request on OIDC discovery — discovery happens once, on the cold cache
+    key = f"{cfg.oidc_issuer}|{cfg.oidc_jwks_url or ''}"
+    client = _jwk_clients.get(key)
     if client is None:
-        client = jwt.PyJWKClient(uri, cache_keys=True, lifespan=300)
-        _jwk_clients[uri] = client
+        client = jwt.PyJWKClient(_jwks_uri(cfg), cache_keys=True, lifespan=300)
+        _jwk_clients[key] = client
     return client
 
 

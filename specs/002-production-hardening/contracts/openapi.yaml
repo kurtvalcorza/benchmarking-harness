@@ -310,7 +310,9 @@ components:
 
     ModelVersion:
       type: object
-      required: [id, model_id, name, model_class, version, framework, status, submitted_at, submitted_by, artifact, evaluation_intent]
+      # evaluation_intent is provided once the durable JobIntent outbox lands (US4);
+      # until then the response carries verified identity + the artifact receipt.
+      required: [id, model_id, name, model_class, version, framework, status, submitted_at, submitted_by, artifact]
       properties:
         id: { type: string, format: uuid }
         model_id: { type: string, format: uuid }
@@ -390,7 +392,10 @@ components:
 
     TierResult:
       type: object
-      required: [tier, metrics, passed, coverage, evaluator, dataset_checksum]
+      # coverage + evaluator are present on scored Tier 1/Tier 2 results; Tier 3
+      # (operational safety) does not score per-item predictions, so they are
+      # optional/nullable rather than universally required.
+      required: [tier, metrics, passed, dataset_checksum]
       properties:
         tier: { type: string, enum: [capability, domain_stress, operational_safety] }
         condition: { type: string, nullable: true, enum: [clean, rain, low_light, fog] }

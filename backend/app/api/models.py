@@ -214,6 +214,7 @@ def _version_out(session: Session, mv: ModelVersion) -> ModelVersionOut:
         framework=mv.framework,
         status=mv.status,
         submitted_at=mv.submitted_at,
+        submitted_by=mv.submitted_by,
         artifact=ArtifactReceiptOut(
             id=receipt.id,
             sha256=receipt.sha256,
@@ -261,6 +262,7 @@ def get_model(
         framework=mv.framework,
         status=mv.status,
         submitted_at=mv.submitted_at,
+        submitted_by=mv.submitted_by,
         declared_sources=list(mv.declared_sources or []),
         card_markdown=(card.human_sections + card.machine_blocks) if card else None,
         missing_card_fields=list(card.missing_fields or []) if card else [],

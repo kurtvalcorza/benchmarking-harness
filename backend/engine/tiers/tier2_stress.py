@@ -89,7 +89,15 @@ def run_tier2(
             m["safety_critical"] = per_class  # FR-009: never aggregate-only
             result.safety_breach = result.safety_breach or breach
             passed, thr_dict, unratified = check_threshold(m, threshold)
+            if not coverage["valid"]:
+                # untrusted output cannot pass a stress condition either
+                passed = False
+                m["coverage_invalid"] = True
             result.unratified = result.unratified or unratified
+            evaluator = metrics_mod.evaluator_provenance(
+                model_class, harness_version=HARNESS_VERSION
+            )
+            evaluator["dataset_checksum"] = golden.checksum()  # scored on the Golden Set
             result.outcomes.append(
                 TierOutcome(
                     tier=Tier.domain_stress,
@@ -99,9 +107,7 @@ def run_tier2(
                     passed=passed,
                     unratified=unratified,
                     coverage=coverage,
-                    evaluator=metrics_mod.evaluator_provenance(
-                        model_class, harness_version=HARNESS_VERSION
-                    ),
+                    evaluator=evaluator,
                     evidence={"sandbox_mode": job.sandbox_mode, "timing": job.timing},
                 )
             )

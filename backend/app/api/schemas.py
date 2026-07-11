@@ -24,6 +24,7 @@ class ModelVersionOut(BaseModel):
     framework: str
     status: ModelStatus
     submitted_at: datetime
+    submitted_by: str
     artifact: ArtifactReceiptOut | None = None
 
 

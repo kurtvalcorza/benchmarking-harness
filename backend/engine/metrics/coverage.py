@@ -62,6 +62,32 @@ def score_issues(predictions: list[Prediction]) -> list[dict]:
     return issues
 
 
+def shape_issues(predictions: list[Prediction]) -> list[dict]:
+    """Structurally invalid DETECTION output → typed `malformed_output` issues.
+
+    A detection prediction must have matching boxes/scores/labels lengths and
+    every box must be a finite 4-tuple with x2>=x1, y2>=y1. Catching this here
+    (before metric calculation) yields a typed invalid-output result instead of
+    an indexing crash recorded as a generic infra failure.
+    """
+    issues: list[dict] = []
+    for p in predictions:
+        if not (p.boxes or p.scores or p.labels):
+            continue  # not a detection-shaped prediction
+        malformed = not (len(p.boxes) == len(p.scores) == len(p.labels))
+        for box in p.boxes:
+            if len(box) != 4 or any(not _finite(v) for v in box):
+                malformed = True
+                break
+            x1, y1, x2, y2 = box
+            if x2 < x1 or y2 < y1:
+                malformed = True
+                break
+        if malformed:
+            _add_issue(issues, "malformed_output", p.image_id)
+    return issues
+
+
 def compute_coverage(predictions: list[Prediction], annotations: dict[str, list[dict]]) -> Coverage:
     """Coverage of `predictions` against the registered dataset's image ids.
 
@@ -92,6 +118,7 @@ def compute_coverage(predictions: list[Prediction], annotations: dict[str, list[
         _add_issue(issues, "missing_prediction", image_id)
 
     issues.extend(score_issues(predictions))
+    issues.extend(shape_issues(predictions))
 
     valid = duplicate_count == 0 and unexpected_count == 0 and not any(
         i["code"] in ("nan_score", "malformed_output") for i in issues

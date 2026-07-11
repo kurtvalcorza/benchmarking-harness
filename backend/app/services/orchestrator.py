@@ -353,10 +353,11 @@ def _persist_tier_results(
     dataset_checksum = (golden.checksum if golden else "") or ""
     for i, o in enumerate(outcomes):
         evidence_path = ev_dir / f"{i:02d}-{o.tier.value}{'-' + o.condition if o.condition else ''}.json"
-        # US2: stamp the evaluator's dataset_checksum to match the TierResult so
-        # a number's provenance is self-consistent (data-model invariant).
+        # US2: the tier stamps evaluator.dataset_checksum with ITS OWN dataset
+        # (Tier 1 = benchmark, Tier 2 = Golden Set); only fill a missing value
+        # here, never overwrite the tier's correct one.
         evaluator = dict(o.evaluator) if o.evaluator else None
-        if evaluator is not None:
+        if evaluator is not None and not evaluator.get("dataset_checksum"):
             evaluator["dataset_checksum"] = dataset_checksum
         payload = json.dumps(
             {

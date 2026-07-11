@@ -128,9 +128,14 @@ def authorize_run_read(
     principal: auth_service.Principal, run: EvaluationRun, session: Session
 ) -> None:
     """Run-evidence object scope (security-boundary.md): auditor→all,
-    adjudicator→related flagged case, governance→affected registration."""
+    submitter→own model version, adjudicator→related flagged case,
+    governance→affected registration."""
     if principal.has_any(Role.auditor):
         return
+    if principal.has_any(Role.submitter):
+        version = session.get(ModelVersion, run.model_version_id)
+        if version is not None and version.submitted_by == principal.principal_key:
+            return
     if principal.has_any(Role.adjudicator) and _has_flagged_run(session, run.model_version_id):
         return
     if principal.has_any(Role.governance) and run.golden_set_id:
