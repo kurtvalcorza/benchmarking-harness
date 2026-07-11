@@ -40,6 +40,29 @@ def test_missing_recall_floor_rejected(client):
     assert "pedestrian" in r.text
 
 
+def test_out_of_range_recall_floor_rejected(client):
+    """A floor like -1 would silently disarm the safety gate (FR-026)."""
+    r = client.post("/golden-sets", json=det_manifest(recall_floors={"pedestrian": -1.0}))
+    assert r.status_code == 422
+    r = client.post("/golden-sets", json=det_manifest(recall_floors={"pedestrian": 1.5}))
+    assert r.status_code == 422
+
+
+def test_unannotated_image_rejected_at_registration(client, tmp_path):
+    """An image file with no annotation entry skews mAP/checksums silently."""
+    import shutil
+
+    from tests.conftest import DET_GOLDEN
+
+    ds = tmp_path / "extra-image-golden"
+    shutil.copytree(DET_GOLDEN, ds)
+    some_img = next((ds / "images").glob("*.png"))
+    shutil.copyfile(some_img, ds / "images" / "stale_extra.png")
+    r = client.post("/golden-sets", json=det_manifest(data_ref=str(ds)))
+    assert r.status_code == 422
+    assert "stale_extra" in r.text
+
+
 def test_restrictive_license_rejected(client):
     r = client.post("/golden-sets", json=det_manifest(license="cc-by-nc-4.0"))
     assert r.status_code == 422
@@ -108,6 +131,18 @@ def test_pending_adjudication_reevaluated_on_golden_set_update(client):
     assert history[1]["golden_set"]["version"] == "v2"
     # still weak → flagged again, but now against current evidence
     assert client.get(f"/models/{mv['id']}").json()["status"] == "pending_adjudication"
+
+    # the SUPERSEDED run must be neither queued nor decidable — a reviewer can
+    # never act on stale evidence
+    queue = [q for q in client.get("/adjudication/queue").json() if q["model_version_id"] == mv["id"]]
+    assert len(queue) == 1
+    assert queue[0]["run_id"] == history[1]["id"]
+    stale = client.post(
+        f"/adjudication/{history[0]['id']}/decision",
+        json={"reviewer": "r", "decision": "reject", "rationale": "stale"},
+    )
+    assert stale.status_code == 409
+    assert "superseded" in stale.text
 
 
 def test_label_map_canonicalizes_foreign_vocabulary(client, tmp_path, monkeypatch):

@@ -105,6 +105,7 @@ def evaluate_version(version_id: str) -> str | None:
         golden_set_checksum=golden.checksum if golden else None,
         started_at=utcnow(),
     )
+    run_id = run.id  # capture pre-commit: the instance detaches after the session closes
     outcomes: list[TierOutcome] = []
     safety_breach = False
     infra_error: str | None = None
@@ -181,52 +182,95 @@ def evaluate_version(version_id: str) -> str | None:
 
     run.finished_at = utcnow()
 
-    with Session(get_engine()) as session:
-        version = session.get(ModelVersion, version_id)
-        if infra_error:
-            # infra failure ≠ model failure (spec edge case): no model verdict
-            run.infra_ok = False
-            run.verdict = None
-            run.flag_trigger = f"infra:{infra_error[:300]}"
+    try:
+        with Session(get_engine()) as session:
+            version = session.get(ModelVersion, version_id)
+            if infra_error:
+                # infra failure ≠ model failure (spec edge case): no model verdict
+                run.infra_ok = False
+                run.verdict = None
+                run.flag_trigger = f"infra:{infra_error[:300]}"
+                session.add(run)
+                _persist_tier_results(session, run, outcomes, golden)
+                version.status = ModelStatus.pending  # eligible for retry/resubmission
+                audit.record(
+                    session,
+                    actor="orchestrator",
+                    action="run-infra-failure",
+                    target_ref=f"run:{run.id}",
+                )
+                session.add(version)
+                session.commit()
+                return run_id
+
+            score = score_run(
+                outcomes=outcomes,
+                safety_breach=safety_breach,
+                declared_sources=declared_sources,
+            )
+            run.verdict = score.verdict
+            run.flag_trigger = score.flag_trigger
             session.add(run)
             _persist_tier_results(session, run, outcomes, golden)
-            version.status = ModelStatus.pending  # eligible for retry/resubmission
+
+            new_status = status_for_verdict(score.verdict)
+            assert_transition(version.status, new_status)
+            version.status = new_status
+            session.add(version)
             audit.record(
                 session,
                 actor="orchestrator",
-                action="run-infra-failure",
-                target_ref=f"run:{run.id}",
+                action=f"status-change:{new_status.value}",
+                target_ref=f"model_version:{version.id}",
+                checksum=golden.checksum if golden else None,
             )
-            session.add(version)
             session.commit()
-            return run.id
 
-        score = score_run(
-            outcomes=outcomes,
-            safety_breach=safety_breach,
-            declared_sources=declared_sources,
-        )
-        run.verdict = score.verdict
-        run.flag_trigger = score.flag_trigger
-        session.add(run)
-        _persist_tier_results(session, run, outcomes, golden)
+            _regenerate_card(session, version_id, model_name, sandbox_mode_used)
+            session.commit()
+    except Exception:
+        # result persistence itself failed (bad results dir, permissions, full
+        # disk) — never leave the version stuck `evaluating` with no run
+        _reset_to_pending(version_id, "run-persistence-failure")
+        raise
 
-        new_status = status_for_verdict(score.verdict)
-        assert_transition(version.status, new_status)
-        version.status = new_status
-        session.add(version)
-        audit.record(
-            session,
-            actor="orchestrator",
-            action=f"status-change:{new_status.value}",
-            target_ref=f"model_version:{version.id}",
-            checksum=golden.checksum if golden else None,
-        )
-        session.commit()
+    # a golden-set update may have landed while this run was IN FLIGHT — the
+    # candidates in reevaluate_for_golden_set are derived from persisted runs,
+    # so this run was invisible to it. Re-enqueue against the current set.
+    if golden is not None:
+        with Session(get_engine()) as session:
+            latest = _latest_golden_set(session, model_class)
+            stale = latest is not None and latest.id != golden.id
+            if stale:
+                audit.record(
+                    session,
+                    actor="orchestrator",
+                    action="re-evaluation-flagged:golden-set-updated-mid-run",
+                    target_ref=f"model_version:{version_id}",
+                    checksum=latest.checksum,
+                )
+                session.commit()
+        if stale:
+            enqueue_evaluation(version_id)
+    return run_id
 
-        _regenerate_card(session, version_id, model_name, sandbox_mode_used)
-        session.commit()
-        return run.id
+
+def _reset_to_pending(version_id: str, reason: str) -> None:
+    try:
+        with Session(get_engine()) as session:
+            version = session.get(ModelVersion, version_id)
+            if version is not None and version.status is ModelStatus.evaluating:
+                version.status = ModelStatus.pending
+                session.add(version)
+                audit.record(
+                    session,
+                    actor="orchestrator",
+                    action=reason,
+                    target_ref=f"model_version:{version_id}",
+                )
+                session.commit()
+    except Exception:
+        pass  # best effort — the original exception is what matters
 
 
 def _persist_tier_results(
@@ -323,6 +367,7 @@ def _regenerate_card(
     inputs = cards.CardInputs(
         model_name=model_name,
         verdict=latest.verdict.value if latest and latest.verdict else None,
+        flag_trigger=latest.flag_trigger if latest else None,
         evaluated_at=latest.finished_at if latest else None,
         harness_version=HARNESS_VERSION,
         sandbox_mode=sandbox_mode,

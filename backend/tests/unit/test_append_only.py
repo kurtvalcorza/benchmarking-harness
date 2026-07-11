@@ -59,6 +59,25 @@ def test_audit_events_append_only(session):
     session.rollback()
 
 
+def test_one_adjudication_record_per_run(session):
+    """Two racing reviewers cannot both record: unique(run_id) at the DB level."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.db.models import AdjudicationRecord
+
+    run = _run(session)
+    session.add(
+        AdjudicationRecord(run_id=run.id, trigger="t", reviewer="a", decision="reject", rationale="x")
+    )
+    session.commit()
+    session.add(
+        AdjudicationRecord(run_id=run.id, trigger="t", reviewer="b", decision="approve", rationale="y")
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
+
+
 def test_mutable_entities_still_update(session):
     run = _run(session)
     mv = session.get(ModelVersion, run.model_version_id)

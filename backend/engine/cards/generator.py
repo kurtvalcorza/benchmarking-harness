@@ -52,6 +52,7 @@ class CardInputs:
     artifact_digest: str | None = None
     adjudications: list[dict] = field(default_factory=list)  # reviewer/decision/rationale/at
     limitations: list[str] = field(default_factory=list)
+    flag_trigger: str | None = None  # why the run awaits adjudication, if it does
 
 
 def split_human_sections(existing_card: str) -> str:
@@ -133,6 +134,13 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
             for a in inputs.adjudications
         ]
         adjudication_block = "\n".join(adj_lines)
+    elif inputs.verdict == "pending_adjudication":
+        # never claim "no adjudication required" while the run is BLOCKED on one
+        adjudication_block = (
+            f"⏳ **PENDING human adjudication** — trigger: {inputs.flag_trigger or TBC}. "
+            "This model is not approved; a recorded reviewer decision is required "
+            "(Constitution I)."
+        )
     else:
         adjudication_block = "No adjudication required for this run."
 
@@ -176,4 +184,8 @@ def artifact_digest(path: str) -> str | None:
     p = Path(path)
     if not p.exists():
         return None
-    return hashlib.sha256(p.read_bytes()).hexdigest()[:16]
+    h = hashlib.sha256()
+    with p.open("rb") as f:  # stream: real weights can be hundreds of MB
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]

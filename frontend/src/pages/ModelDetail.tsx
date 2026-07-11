@@ -133,7 +133,11 @@ export function ModelDetail() {
       const h = await api.getHistory(id)
       setHistory(h)
       const mine = h.filter((r) => r.model_version_id === d.id)
-      if (mine.length) setRun(await api.getRun(mine[mine.length - 1].id))
+      if (mine.length) {
+        setRun(await api.getRun(mine[mine.length - 1].id))
+      } else {
+        setRun(null) // never show a previously viewed model's stale run
+      }
     } catch (e) {
       setError(String(e))
     }

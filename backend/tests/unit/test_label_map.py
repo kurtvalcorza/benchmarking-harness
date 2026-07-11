@@ -1,6 +1,8 @@
 """F6 — label canonicalization: model-emitted labels map onto the dataset's
 label space before scoring; unmapped labels pass through untouched."""
 
+import pytest
+
 from engine.adapters.base import Prediction
 from engine.metrics import canonicalize, evaluate_detection
 
@@ -32,6 +34,18 @@ def test_classification_label_and_scores_mapped():
     out = canonicalize([p], {"car": "vehicle"})
     assert out[0].label == "vehicle"
     assert out[0].class_scores == {"vehicle": 0.8, "cat": 0.2}
+
+
+def test_colliding_class_scores_are_summed_not_overwritten():
+    """car/truck/bus → vehicle must combine probabilities, not keep the last."""
+    p = Prediction(
+        image_id="x",
+        label="car",
+        class_scores={"car": 0.5, "truck": 0.3, "bus": 0.1, "cat": 0.1},
+    )
+    out = canonicalize([p], {"car": "vehicle", "truck": "vehicle", "bus": "vehicle"})
+    assert out[0].class_scores["vehicle"] == pytest.approx(0.9)
+    assert out[0].class_scores["cat"] == pytest.approx(0.1)
 
 
 def test_mapping_repairs_scoring():

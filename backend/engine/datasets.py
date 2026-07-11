@@ -107,6 +107,13 @@ def validate_dataset(root: Path) -> list[str]:
         orphaned = sorted(set(ann) - image_ids)[:5]
         if orphaned:
             problems.append(f"annotated ids with no image file: {orphaned}")
+        # unannotated files skew mAP (all predictions on them are FPs) and the
+        # checksum; images with genuinely no objects must carry an empty list
+        unannotated = sorted(image_ids - set(ann))[:5]
+        if unannotated:
+            problems.append(
+                f"image files with no annotation entry (use [] for empty): {unannotated}"
+            )
     return problems
 
 

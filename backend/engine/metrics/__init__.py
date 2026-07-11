@@ -24,6 +24,12 @@ def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> li
         return predictions
     out = []
     for p in predictions:
+        # several emitted labels may collapse onto one canonical class
+        # (car/truck/bus → vehicle): SUM their probabilities, never overwrite
+        merged_scores: dict[str, float] = {}
+        for k, v in p.class_scores.items():
+            key = label_map.get(k, k)
+            merged_scores[key] = merged_scores.get(key, 0.0) + v
         out.append(
             Prediction(
                 image_id=p.image_id,
@@ -31,7 +37,7 @@ def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> li
                 scores=p.scores,
                 labels=[label_map.get(lbl, lbl) for lbl in p.labels],
                 label=label_map.get(p.label, p.label) if p.label else p.label,
-                class_scores={label_map.get(k, k): v for k, v in p.class_scores.items()},
+                class_scores=merged_scores,
                 extra=p.extra,
             )
         )

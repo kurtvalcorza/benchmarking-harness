@@ -30,10 +30,15 @@ CLASS_TO_BENCH = {
 # a small, road-scene-flavored label slice for the POC
 DET_LABELS = ["Car", "Person", "Traffic sign"]
 CLS_LABELS = ["Car", "Animal", "Building"]
-LABEL_CANON = {
+# per-class canon maps: keeping these separate stops detection-only labels
+# (Person/Traffic sign) leaking into classification datasets and vice versa
+DET_CANON = {
     "Car": "vehicle",
     "Person": "pedestrian",
     "Traffic sign": "traffic_sign",
+}
+CLS_CANON = {
+    "Car": "vehicle",
     "Animal": "animal",
     "Building": "building",
 }
@@ -77,19 +82,19 @@ def fetch_real(model_class: str, n: int, out: Path) -> None:
             with Image.open(src) as im:
                 w, h = im.size
             for det in sample.ground_truth.detections:
-                if det.label not in LABEL_CANON:
+                if det.label not in DET_CANON:
                     continue
                 x, y, bw, bh = det.bounding_box  # relative xywh
                 objs.append(
                     {
-                        "label": LABEL_CANON[det.label],
+                        "label": DET_CANON[det.label],
                         "bbox": [x * w, y * h, (x + bw) * w, (y + bh) * h],
                     }
                 )
         elif model_class == "classification" and sample.positive_labels:
             for c in sample.positive_labels.classifications:
-                if c.label in LABEL_CANON:
-                    objs = [{"label": LABEL_CANON[c.label]}]
+                if c.label in CLS_CANON:
+                    objs = [{"label": CLS_CANON[c.label]}]
                     break
         ann[img_id] = objs
     (out / "annotations.json").write_text(json.dumps(ann, indent=1))

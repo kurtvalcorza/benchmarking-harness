@@ -108,12 +108,14 @@ async def submit_model(
     try:
         session.commit()
     except IntegrityError:
-        # concurrent duplicate submission lost the race on the (model_id,
-        # version) unique constraint
+        # concurrent duplicate submission lost the race on a uniqueness
+        # constraint — (model_id, version) or the Model's (name, model_class)
         session.rollback()
         shutil.rmtree(dest, ignore_errors=True)
         raise HTTPException(
-            422, f"version '{version}' already exists for model '{name}'"
+            422,
+            f"model '{name}' version '{version}' already exists (or was submitted "
+            "concurrently) — resubmit with a new version",
         ) from None
     session.refresh(mv)
 

@@ -7,6 +7,7 @@ tests/contract/test_no_auto_approval.py).
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.schemas import AdjudicationItemOut, DecisionIn
@@ -26,6 +27,15 @@ from app.services.state_machine import apply_adjudication
 router = APIRouter(tags=["adjudication"])
 
 
+def _latest_run_id(session: Session, model_version_id: str) -> str | None:
+    runs = session.exec(
+        select(EvaluationRun)
+        .where(EvaluationRun.model_version_id == model_version_id)
+        .order_by(EvaluationRun.started_at)
+    ).all()
+    return runs[-1].id if runs else None
+
+
 @router.get("/adjudication/queue", response_model=list[AdjudicationItemOut])
 def queue(session: Session = Depends(get_session)) -> list[AdjudicationItemOut]:
     runs = session.exec(
@@ -36,6 +46,8 @@ def queue(session: Session = Depends(get_session)) -> list[AdjudicationItemOut]:
         version = session.get(ModelVersion, run.model_version_id)
         if version is None or version.status is not ModelStatus.pending_adjudication:
             continue  # already decided
+        if run.id != _latest_run_id(session, version.id):
+            continue  # superseded (e.g. golden-set update re-ran it) — stale evidence
         tiers = session.exec(select(TierResult).where(TierResult.run_id == run.id)).all()
         evidence = "; ".join(t.evidence_ref for t in tiers if t.evidence_ref)
         model = session.get(Model, version.model_id)
@@ -65,6 +77,10 @@ def decide(
         or version.status is not ModelStatus.pending_adjudication
     ):
         raise HTTPException(409, "run is not pending adjudication")
+    if run.id != _latest_run_id(session, version.id):
+        # a newer run (e.g. after a golden-set update) supersedes this one —
+        # decisions must never be recorded against stale evidence
+        raise HTTPException(409, "run superseded by a newer evaluation; review the latest run")
 
     if body.decision is Decision.approve:
         # data-model validation rule: `approved` requires a stored TierResult
@@ -102,7 +118,13 @@ def decide(
         action=f"adjudication:{body.decision.value}",
         target_ref=f"run:{run.id}",
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # two reviewers raced the status check; the unique(run_id) constraint
+        # guarantees exactly one permanent decision — the loser gets a 409
+        session.rollback()
+        raise HTTPException(409, "a decision was already recorded for this run") from None
 
     model = session.get(Model, version.model_id)
     _regenerate_card(session, version.id, model.name, sandbox_mode=None)

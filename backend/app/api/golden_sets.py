@@ -9,6 +9,7 @@ class MUST carry a recall floor (FR-026).
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.schemas import GoldenSetManifestIn, GoldenSetOut
@@ -42,6 +43,13 @@ def register_golden_set(
         raise HTTPException(
             422,
             f"every safety-critical class needs a recall floor (FR-026); missing: {missing_floors}",
+        )
+    bad_floors = {c: f for c, f in manifest.recall_floors.items() if not 0.0 <= f <= 1.0}
+    if bad_floors:
+        # a floor outside [0,1] silently disarms (or hard-wires) the safety
+        # gate — e.g. floor=-1 makes recall 0.0 "pass" (FR-026/FR-012a)
+        raise HTTPException(
+            422, f"recall floors must be within [0, 1] (they are recalls): {bad_floors}"
         )
     dup = session.exec(
         select(GoldenTestSet).where(
@@ -103,7 +111,14 @@ def register_golden_set(
         target_ref=f"golden_set:{gs.id}",
         checksum=checksum,
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # concurrent registration lost the race on the (name, version) constraint
+        session.rollback()
+        raise HTTPException(
+            422, f"golden set '{manifest.name}' {manifest.version} already registered"
+        ) from None
     session.refresh(gs)
 
     flagged = reevaluate_for_golden_set(gs)  # FR-004

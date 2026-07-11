@@ -68,6 +68,11 @@ make gates                      # the three constitution gates:
 
 CI (`.github/workflows/ci.yml`) runs the gates + backend + frontend on every push.
 
+> **Schema changes:** the POC creates tables with `create_all` and ships no
+> migrations. After pulling a change that alters `backend/app/db/models.py`,
+> reset local state (delete `harness.db`, or `./.state` for the compose stack) —
+> an old database will fail on missing columns.
+
 ## Licensing-clean by design
 
 This repository is **code-only**. It never redistributes third-party datasets:

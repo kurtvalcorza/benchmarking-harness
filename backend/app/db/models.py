@@ -22,6 +22,9 @@ def utcnow() -> datetime:
 
 
 class Model(SQLModel, table=True):
+    # model identity survives concurrent first submissions
+    __table_args__ = (UniqueConstraint("name", "model_class"),)
+
     id: str = Field(default_factory=_uuid, primary_key=True)
     name: str = Field(index=True)
     model_class: ModelClass
@@ -44,6 +47,10 @@ class ModelVersion(SQLModel, table=True):
 
 
 class GoldenTestSet(SQLModel, table=True):
+    # a golden-set version is immutable and unique (FR-004): enforce identity
+    # in the DB, not just the registration API's read-before-insert check
+    __table_args__ = (UniqueConstraint("name", "version"),)
+
     id: str = Field(default_factory=_uuid, primary_key=True)
     name: str
     domain: str = "general"
@@ -97,6 +104,10 @@ class ModelCard(SQLModel, table=True):
 
 
 class AdjudicationRecord(SQLModel, table=True):  # 🔒 append-only
+    # exactly ONE permanent decision per run: two reviewers racing the status
+    # check cannot both record (the loser gets an IntegrityError → 409)
+    __table_args__ = (UniqueConstraint("run_id"),)
+
     id: str = Field(default_factory=_uuid, primary_key=True)
     run_id: str = Field(foreign_key="evaluationrun.id", index=True)
     trigger: str

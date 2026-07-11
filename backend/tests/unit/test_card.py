@@ -64,6 +64,21 @@ def test_human_sections_preserved_across_regeneration():
     assert "- **Verdict**: fail" in card2
 
 
+def test_pending_adjudication_never_reads_as_no_review_needed():
+    """A flagged, undecided run must show PENDING — claiming 'no adjudication
+    required' would be misleading compliance evidence."""
+    card, _ = generate(
+        _inputs(
+            verdict="pending_adjudication",
+            flag_trigger="safety_critical_recall_below_floor",
+            adjudications=[],
+        )
+    )
+    assert "No adjudication required" not in card
+    assert "PENDING human adjudication" in card
+    assert "safety_critical_recall_below_floor" in card
+
+
 def test_adjudication_block_lists_decisions():
     card, _ = generate(
         _inputs(
