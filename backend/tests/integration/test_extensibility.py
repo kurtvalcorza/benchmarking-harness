@@ -343,3 +343,54 @@ def test_newer_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
     assert len(history) == 2
     assert history[0]["golden_set"]["version"] == "v1"  # first run scored against v1
     assert history[1]["golden_set"]["version"] == "v2"  # recheck re-ran against v2
+
+
+def test_registration_after_run_commit_is_not_enqueued_twice(client, monkeypatch):
+    """Registration in the commit-to-recheck window produces exactly one retry.
+
+    The registration recovery sees the now-persisted no-golden run and claims
+    its retry. The original run's post-commit recheck sees the same new set, but
+    must lose that claim instead of enqueueing a duplicate third run.
+    """
+    from sqlmodel import Session
+
+    from app.db.enums import ModelClass
+    from app.db.models import GoldenTestSet
+    from app.db.repositories import get_engine
+    from app.services import orchestrator
+    from engine.datasets import Dataset
+    from tests.conftest import DET_GOLDEN, HEALTHY_DET
+
+    real_latest = orchestrator._latest_golden_set
+    state = {"calls": 0, "injected": False}
+
+    def latest_then_register(session, model_class):
+        state["calls"] += 1
+        # First call captures golden=None. The second is the post-commit
+        # recheck, so registration recovery can now see the persisted run.
+        if state["calls"] == 2 and not state["injected"]:
+            state["injected"] = True
+            with Session(get_engine(), expire_on_commit=False) as s:
+                gs = GoldenTestSet(
+                    name="commit-window-set",
+                    model_class=ModelClass.detection,
+                    version="v1",
+                    checksum=Dataset(root=DET_GOLDEN).checksum(),
+                    conditions=["rain", "low_light", "fog"],
+                    safety_critical_classes=["pedestrian"],
+                    recall_floors={"pedestrian": 0.6},
+                    license="owned",
+                    data_ref=str(DET_GOLDEN),
+                )
+                s.add(gs)
+                s.commit()
+            orchestrator.reevaluate_for_golden_set(gs)
+        return real_latest(session, model_class)
+
+    monkeypatch.setattr(orchestrator, "_latest_golden_set", latest_then_register)
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="commit-window", sources=["s"])
+
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[0]["golden_set"]["version"] is None
+    assert history[1]["golden_set"]["version"] == "v1"

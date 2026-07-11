@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.db.enums import Condition, ModelClass, ModelStatus, Tier
@@ -26,6 +27,7 @@ from app.db.models import (
     Model,
     ModelCard,
     ModelVersion,
+    ReevaluationClaim,
     TierResult,
     utcnow,
 )
@@ -71,6 +73,26 @@ def _latest_golden_set(session: Session, model_class: ModelClass) -> GoldenTestS
         select(GoldenTestSet).where(GoldenTestSet.model_class == model_class)
     ).all()
     return max(sets, key=lambda s: s.registered_at) if sets else None
+
+
+def _claim_reevaluation(
+    session: Session, version_id: str, golden_set_id: str
+) -> bool:
+    """Atomically claim one automatic retry for a version/set pair."""
+    try:
+        # Keep a uniqueness collision local to the savepoint so callers can
+        # still commit their surrounding audit transaction.
+        with session.begin_nested():
+            session.add(
+                ReevaluationClaim(
+                    model_version_id=version_id,
+                    golden_set_id=golden_set_id,
+                )
+            )
+            session.flush()
+    except IntegrityError:
+        return False
+    return True
 
 
 def evaluate_version(version_id: str) -> str | None:
@@ -245,7 +267,8 @@ def evaluate_version(version_id: str) -> str | None:
     with Session(get_engine()) as session:
         latest = _latest_golden_set(session, model_class)
         stale = latest is not None and (golden is None or latest.id != golden.id)
-        if stale:
+        claimed = stale and _claim_reevaluation(session, version_id, latest.id)
+        if claimed:
             audit.record(
                 session,
                 actor="orchestrator",
@@ -254,7 +277,7 @@ def evaluate_version(version_id: str) -> str | None:
                 checksum=latest.checksum,
             )
             session.commit()
-    if stale:
+    if claimed:
         enqueue_evaluation(version_id)
     return run_id
 
@@ -459,6 +482,8 @@ def reevaluate_for_golden_set(golden_set: GoldenTestSet) -> list[str]:
                 )
             ) or (vid in stuck_ids and version.status is ModelStatus.pending)
             if not eligible:
+                continue
+            if not _claim_reevaluation(session, vid, golden_set.id):
                 continue
             # status stays put until the re-run starts (approved/pending →
             # evaluating are legal transitions); the audit event records the flag

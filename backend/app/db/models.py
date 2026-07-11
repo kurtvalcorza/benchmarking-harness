@@ -1,7 +1,8 @@
 """SQLModel entities per data-model.md.
 
-Append-only entities (EvaluationRun, TierResult, AdjudicationRecord, AuditEvent)
-are enforced at the repository layer (repositories.py), not here.
+Append-only entities (EvaluationRun, TierResult, AdjudicationRecord, AuditEvent,
+ReevaluationClaim) are enforced at the repository layer (repositories.py), not
+here.
 """
 
 import uuid
@@ -82,6 +83,22 @@ class EvaluationRun(SQLModel, table=True):  # 🔒 append-only
     flag_trigger: str | None = None  # why the run was routed to adjudication (FR-012)
 
 
+class ReevaluationClaim(SQLModel, table=True):  # 🔒 append-only
+    """Exactly one automatic retry per model version and golden set.
+
+    Registration recovery and an in-flight run's post-verdict recheck can both
+    discover the same stale version. This durable claim makes those paths race
+    safely across processes instead of enqueueing duplicate evaluations.
+    """
+
+    __table_args__ = (UniqueConstraint("model_version_id", "golden_set_id"),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    model_version_id: str = Field(foreign_key="modelversion.id", index=True)
+    golden_set_id: str = Field(foreign_key="goldentestset.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class TierResult(SQLModel, table=True):  # 🔒 append-only
     id: str = Field(default_factory=_uuid, primary_key=True)
     run_id: str = Field(foreign_key="evaluationrun.id", index=True)
@@ -127,4 +144,10 @@ class AuditEvent(SQLModel, table=True):  # 🔒 append-only
     at: datetime = Field(default_factory=utcnow)
 
 
-APPEND_ONLY_TABLES = (EvaluationRun, TierResult, AdjudicationRecord, AuditEvent)
+APPEND_ONLY_TABLES = (
+    EvaluationRun,
+    TierResult,
+    AdjudicationRecord,
+    AuditEvent,
+    ReevaluationClaim,
+)
