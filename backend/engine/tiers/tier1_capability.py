@@ -45,6 +45,8 @@ def run_tier1(*, framework: str, artifact: str, model_class: ModelClass, thresho
             adapter_error=job.adapter_error,
         )
     preds = [Prediction.from_dict(p) for p in job.predictions]
+    # F6: benchmark datasets may carry a label_map in their manifest.json
+    preds = metrics_mod.canonicalize(preds, dataset.manifest.get("label_map") or {})
     m = metrics_mod.evaluate(model_class, preds, dataset.annotations)
     m["benchmark"] = bench.reference
     m["dataset"] = bench.dataset

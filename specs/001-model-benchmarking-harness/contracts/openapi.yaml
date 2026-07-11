@@ -172,6 +172,13 @@ components:
           type: object
           additionalProperties: { type: number }
           description: per-class recall floor for each safety_critical class (FR-026)
+        label_map:
+          type: object
+          additionalProperties: { type: string }
+          description: >
+            optional model-emitted label → dataset label mapping (e.g.
+            person → pedestrian), applied to predictions before scoring so
+            foreign vocabularies (COCO) evaluate without harness changes (FR-020)
         license: { type: string }
         is_public: { type: boolean, description: MUST be false }
     AdjudicationItem:

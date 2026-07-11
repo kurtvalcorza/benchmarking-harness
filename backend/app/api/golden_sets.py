@@ -90,6 +90,7 @@ def register_golden_set(
         conditions=[c.value for c in manifest.conditions],
         safety_critical_classes=manifest.safety_critical,
         recall_floors=manifest.recall_floors,
+        label_map=manifest.label_map,
         license=manifest.license,
         is_public=False,
         data_ref=manifest.data_ref,

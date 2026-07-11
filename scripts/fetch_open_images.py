@@ -37,6 +37,16 @@ LABEL_CANON = {
     "Animal": "animal",
     "Building": "building",
 }
+# model-emitted → canonical (F6): lets COCO-trained detectors (YOLO et al.)
+# score against the canonical label space; written into manifest.json
+COCO_LABEL_MAP = {
+    "person": "pedestrian",
+    "car": "vehicle",
+    "truck": "vehicle",
+    "bus": "vehicle",
+    "stop sign": "traffic_sign",
+    "traffic light": "traffic_sign",
+}
 
 
 def fetch_real(model_class: str, n: int, out: Path) -> None:
@@ -83,6 +93,8 @@ def fetch_real(model_class: str, n: int, out: Path) -> None:
                     break
         ann[img_id] = objs
     (out / "annotations.json").write_text(json.dumps(ann, indent=1))
+    if model_class == "detection":
+        (out / "manifest.json").write_text(json.dumps({"label_map": COCO_LABEL_MAP}, indent=1))
 
 
 def fetch_synthetic(model_class: str, out: Path) -> None:

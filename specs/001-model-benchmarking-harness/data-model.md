@@ -45,6 +45,7 @@ Entities derived from the spec's Key Entities and requirements. Types are logica
 | conditions | Condition[] | which perturbations are provided |
 | safety_critical_classes | str[] | class labels whose per-class recall gates adjudication (FR-026) |
 | recall_floors | map<str,float> | per-class recall floor for each safety-critical class (FR-026; provisional in POC) |
+| label_map | map<str,str> | optional model-emitted → dataset label mapping applied before scoring (validation finding F6; keeps foreign vocabularies scoreable without harness changes, FR-020) |
 | license | str | MUST be owned/permissive for committed data (Constitution II) |
 | is_public | bool | MUST be false (never-public invariant) |
 

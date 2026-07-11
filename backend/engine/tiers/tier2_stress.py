@@ -49,6 +49,7 @@ def run_tier2(
     safety_classes: list[str],
     recall_floors: dict[str, float],
     threshold,
+    label_map: dict[str, str] | None = None,
 ) -> Tier2Result:
     golden = Dataset(root=Path(golden_root))
     annotations = golden.annotations
@@ -78,6 +79,8 @@ def run_tier2(
                 result.adapter_error = job.adapter_error
                 return result
             preds = [Prediction.from_dict(p) for p in job.predictions]
+            # F6: map model-emitted labels onto the golden set's label space
+            preds = metrics_mod.canonicalize(preds, label_map or {})
             m = metrics_mod.evaluate(model_class, preds, annotations)
             per_class, breach = metrics_mod.safety_critical_recall(
                 m, safety_classes, recall_floors

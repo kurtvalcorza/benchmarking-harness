@@ -110,6 +110,51 @@ def test_pending_adjudication_reevaluated_on_golden_set_update(client):
     assert client.get(f"/models/{mv['id']}").json()["status"] == "pending_adjudication"
 
 
+def test_label_map_canonicalizes_foreign_vocabulary(client, tmp_path, monkeypatch):
+    """F6: a model emitting COCO-style labels (person/car) scores correctly
+    when the dataset manifests provide a label_map — and collapses to mAP≈0
+    without one."""
+    import json
+    import shutil
+
+    from tests.conftest import HEALTHY_DET, SAMPLES
+
+    healthy = json.loads(HEALTHY_DET.read_text())
+    healthy["emit_labels"] = {
+        "pedestrian": "person",
+        "vehicle": "car",
+        "traffic_sign": "stop sign",
+    }
+    coco_style = tmp_path / "coco_style.stub.json"
+    coco_style.write_text(json.dumps(healthy))
+    label_map = {"person": "pedestrian", "car": "vehicle", "stop sign": "traffic_sign"}
+
+    # without any label_map the same capable model fails on vocabulary alone
+    register_golden(client, det_manifest())
+    mv_raw = submit_model(client, weights_path=coco_style, name="coco-unmapped", sources=["s"])
+    assert mv_raw["status"] != "approved"
+
+    # Tier 1 benchmark stand-in carrying the label_map in its manifest.json
+    bench_copy = tmp_path / "data" / "benchmarks" / "open-images-det-sample"
+    shutil.copytree(SAMPLES / "benchmarks" / "open-images-det-sample", bench_copy)
+    (bench_copy / "manifest.json").write_text(json.dumps({"label_map": label_map}))
+    monkeypatch.setenv("HARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    # golden set v2 carries the same map → the model scores in canonical space
+    register_golden(client, det_manifest(version="v2", label_map=label_map))
+    mv = submit_model(
+        client, weights_path=coco_style, name="coco-mapped", version="v1", sources=["s"]
+    )
+    assert mv["status"] == "approved", mv
+    runs = client.get(f"/models/{mv['id']}/history").json()
+    run = client.get(f"/runs/{runs[-1]['id']}").json()
+    t2_clean = next(
+        t for t in run["tier_results"] if t["tier"] == "domain_stress" and t["condition"] == "clean"
+    )
+    assert t2_clean["metrics"]["safety_critical"]["pedestrian"]["recall"] > 0.6
+    assert t2_clean["metrics"]["map_50_95"] > 0.2
+
+
 def test_golden_set_update_flags_reevaluation(client):
     """FR-004: models evaluated against v1 are re-flagged when v2 registers."""
     register_golden(client, det_manifest())

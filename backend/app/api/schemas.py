@@ -67,6 +67,11 @@ class GoldenSetManifestIn(BaseModel):
     is_public: bool
     domain: str = "general"
     data_ref: str = Field(default="", description="local path to the fetched data (gitignored)")
+    label_map: dict[str, str] = Field(
+        default_factory=dict,
+        description="model-emitted label → dataset label (e.g. {'person': 'pedestrian'}), "
+        "applied to predictions before scoring (F6)",
+    )
 
 
 class GoldenSetOut(BaseModel):

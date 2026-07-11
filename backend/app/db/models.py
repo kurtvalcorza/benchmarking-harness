@@ -54,6 +54,7 @@ class GoldenTestSet(SQLModel, table=True):
     conditions: list[Condition] = Field(default_factory=list, sa_column=Column(JSON))
     safety_critical_classes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     recall_floors: dict[str, float] = Field(default_factory=dict, sa_column=Column(JSON))
+    label_map: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))  # F6
     license: str  # MUST be owned/permissive for committed data (Constitution II)
     is_public: bool = False  # MUST be false (never-public invariant)
     data_ref: str = ""  # local path to fetched data (gitignored)

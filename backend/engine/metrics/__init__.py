@@ -12,6 +12,32 @@ from engine.metrics.detection import evaluate_detection
 SCORED_CLASSES = {ModelClass.detection, ModelClass.classification}
 
 
+def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> list[Prediction]:
+    """Map model-emitted labels onto the dataset's label space (F6).
+
+    A COCO-trained detector emits `person`/`car`; a golden set may declare
+    `pedestrian`/`vehicle`. The dataset manifest's `label_map` (emitted →
+    dataset label) bridges the two — declared with the DATA, so adding a
+    model vocabulary is a manifest edit, never a harness change (FR-020).
+    Unmapped labels pass through unchanged."""
+    if not label_map:
+        return predictions
+    out = []
+    for p in predictions:
+        out.append(
+            Prediction(
+                image_id=p.image_id,
+                boxes=p.boxes,
+                scores=p.scores,
+                labels=[label_map.get(lbl, lbl) for lbl in p.labels],
+                label=label_map.get(p.label, p.label) if p.label else p.label,
+                class_scores={label_map.get(k, k): v for k, v in p.class_scores.items()},
+                extra=p.extra,
+            )
+        )
+    return out
+
+
 def evaluate(
     model_class: ModelClass,
     predictions: list[Prediction],

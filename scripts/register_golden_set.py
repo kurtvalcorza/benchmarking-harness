@@ -23,12 +23,22 @@ DEFAULTS = {
         "data": REPO / "samples" / "golden" / "det-golden",
         "safety_critical": ["pedestrian"],
         "recall_floors": {"pedestrian": 0.6},
+        # F6: COCO-vocabulary detectors score against the canonical labels
+        "label_map": {
+            "person": "pedestrian",
+            "car": "vehicle",
+            "truck": "vehicle",
+            "bus": "vehicle",
+            "stop sign": "traffic_sign",
+            "traffic light": "traffic_sign",
+        },
     },
     "classification": {
         "name": "cls-golden",
         "data": REPO / "samples" / "golden" / "cls-golden",
         "safety_critical": ["animal"],
         "recall_floors": {"animal": 0.6},
+        "label_map": {},
     },
 }
 
@@ -72,6 +82,7 @@ def main() -> int:
         "is_public": False,
         "domain": "local-context-demo",
         "data_ref": args.data if args.data else str(cfg["data"]),
+        "label_map": cfg["label_map"],
     }
     req = urllib.request.Request(
         f"{args.api}/golden-sets",

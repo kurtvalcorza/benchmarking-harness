@@ -10,7 +10,9 @@ describes a synthetic model's skill:
       "class_skill": {"pedestrian": 0.4}, # per-class override (weak-model demo)
       "brightness_sensitivity": 1.0,      # low-light/fog degrade a sensitive model
       "grounding": 0.8,                   # Tier-3 visual-grounding score
-      "param_count": 3500000
+      "param_count": 3500000,
+      "emit_labels": {"pedestrian": "person"}  # optional: emit a foreign label
+                                               # vocabulary (tests the F6 label_map)
     }
 
 Predictions are generated from the dataset's ground truth with per-object,
@@ -88,6 +90,7 @@ class StubAdapter:
         return preds
 
     def _predict_det(self, model: StubModel, img: Image, gt: list[dict], quality: float) -> Prediction:
+        emit = model.spec.get("emit_labels", {})  # emulate a foreign vocabulary (F6)
         boxes, scores, labels = [], [], []
         for i, obj in enumerate(gt):
             label = obj["label"]
@@ -96,7 +99,7 @@ class StubAdapter:
             if roll < p_hit:
                 boxes.append(list(obj["bbox"]))
                 scores.append(round(0.5 + 0.5 * p_hit * (1 - roll / 2), 4))
-                labels.append(label)
+                labels.append(emit.get(label, label))
         return Prediction(image_id=img.id, boxes=boxes, scores=scores, labels=labels)
 
     def _predict_cls(self, model: StubModel, img: Image, gt: list[dict], quality: float) -> Prediction:

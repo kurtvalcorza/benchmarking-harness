@@ -149,6 +149,7 @@ def evaluate_version(version_id: str) -> str | None:
                     safety_classes=list(golden.safety_critical_classes or []),
                     recall_floors=dict(golden.recall_floors or {}),
                     threshold=get_threshold(model_class, Tier.domain_stress),
+                    label_map=dict(golden.label_map or {}),
                 )
                 if t2.adapter_error:
                     infra_error = t2.adapter_error
