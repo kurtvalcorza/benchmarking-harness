@@ -1,0 +1,479 @@
+openapi: 3.0.3
+info:
+  title: Model Benchmarking Harness API - Feature 002 Contract
+  version: 0.2.0
+  description: >
+    Authenticated production-hardening contract. Reviewer identity is derived
+    from the bearer token. Model uploads are bounded and lifecycle completion
+    is atomic with the current Model Card.
+
+servers:
+  - url: /
+
+security:
+  - oidcBearer: []
+
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Liveness only; returns no dependency or configuration details
+      responses:
+        '200':
+          description: Process is live
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+
+  /readyz:
+    get:
+      summary: Authenticated dependency and schema readiness
+      x-required-roles: [auditor]
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503': { description: Database, schema, queue dispatcher, or runner not ready }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /models:
+    post:
+      summary: Submit a bounded model artifact and create a durable evaluation intent
+      x-required-roles: [submitter]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, model_class, framework, version, weights]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                model_class: { $ref: '#/components/schemas/ModelClass' }
+                framework: { type: string, enum: [pytorch, onnx, stub] }
+                version: { type: string, minLength: 1, maxLength: 100 }
+                declared_sources:
+                  type: array
+                  maxItems: 100
+                  items: { type: string, minLength: 1, maxLength: 2000 }
+                weights:
+                  type: string
+                  format: binary
+                  description: Streamed body part; default maximum 2 GiB, configurable by deployment
+      responses:
+        '201':
+          description: Artifact finalized; Model Version and durable Job Intent committed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Model version already exists }
+        '413': { description: Actual streamed bytes exceeded the configured maximum }
+        '415': { description: Unsupported artifact type }
+        '422': { description: Invalid declaration or artifact/framework mismatch }
+        '507': { description: Artifact storage exhausted }
+
+  /models/{id}:
+    get:
+      summary: Read a Model Version and current Model Card
+      description: Submitters may read their own submission; adjudicators related flagged cases; auditors all.
+      x-required-roles: [submitter, adjudicator, auditor]
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Model detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Not found }
+
+  /models/{id}/history:
+    get:
+      summary: Read authorized append-only run history
+      x-required-roles: [submitter, adjudicator, auditor]
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Ordered history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EvaluationRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Not found }
+
+  /runs/{runId}:
+    get:
+      summary: Read authorized run, coverage, evaluator, and evidence metadata
+      description: >-
+        Governance is object-scoped to runs affected by Golden Test Sets it
+        registered (see the security-boundary "Read arbitrary run evidence"
+        row), so a governance user can inspect the re-evaluation runs their
+        registration triggered.
+      x-required-roles: [submitter, governance, adjudicator, auditor]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Run detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Not found }
+
+  /golden-sets:
+    post:
+      summary: Register a Golden Test Set and durable re-evaluation intents
+      x-required-roles: [governance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GoldenSetManifest' }
+      responses:
+        '201':
+          description: Registered with durable re-evaluation intents
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GoldenSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Name/version already exists }
+        '422': { description: Manifest, license, path containment, checksum, or floor validation failed }
+
+  /golden-sets/{id}:
+    get:
+      summary: Read a registered Golden Test Set and the status of the re-evaluations it triggered
+      description: >-
+        Lets a governance user inspect, after registration, the durable
+        re-evaluation intents/runs their Golden Set triggered (the run evidence
+        itself is read via GET /runs/{runId}). Auditors may read all.
+      x-required-roles: [governance, auditor]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Golden Test Set with its re-evaluation intents/run references
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GoldenSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Not found }
+
+  /adjudication/queue:
+    get:
+      summary: Read pending cases with authorized evidence metadata
+      x-required-roles: [adjudicator, auditor]
+      responses:
+        '200':
+          description: Queue
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdjudicationItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /adjudication/{runId}/decision:
+    post:
+      summary: Atomically record the authenticated adjudicator's decision, status, audit, and Model Card
+      x-required-roles: [adjudicator]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionRequest' }
+      responses:
+        '200':
+          description: Atomic decision committed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DecisionResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Not pending, incomplete lineage, superseded, or already decided }
+        '422': { description: Invalid decision or empty rationale }
+
+components:
+  securitySchemes:
+    oidcBearer:
+      type: openIdConnect
+      openIdConnectUrl: https://issuer.example/.well-known/openid-configuration
+      description: Deployment replaces the example with HARNESS_OIDC_ISSUER metadata URL.
+
+  parameters:
+    ModelId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      headers:
+        WWW-Authenticate:
+          schema: { type: string, example: Bearer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Valid principal lacks role or object permission
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Problem:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+        code: { type: string }
+        request_id: { type: string }
+
+    Readiness:
+      type: object
+      required: [ok, database, schema, dispatcher, runner]
+      properties:
+        ok: { type: boolean }
+        database: { type: string, enum: [ready, unavailable] }
+        schema: { type: string, enum: [current, stale, unknown] }
+        dispatcher: { type: string, enum: [ready, degraded, unavailable] }
+        runner: { type: string, enum: [ready, unavailable, policy_mismatch] }
+        upload_limit_bytes: { type: integer, format: int64 }
+
+    ModelClass:
+      type: string
+      enum: [detection, segmentation, classification, pose, lane, face]
+
+    ModelStatus:
+      type: string
+      enum: [pending, evaluating, pending_adjudication, approved, rejected]
+
+    Verdict:
+      type: string
+      nullable: true
+      enum: [pass, fail, pending_adjudication]
+
+    Decision:
+      type: string
+      enum: [approve, reject, request_changes]
+
+    ArtifactReceipt:
+      type: object
+      required: [id, byte_count, sha256, original_filename, finalized_at]
+      properties:
+        id: { type: string, format: uuid }
+        byte_count: { type: integer, format: int64, minimum: 1 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        original_filename: { type: string }
+        finalized_at: { type: string, format: date-time }
+
+    JobIntentRef:
+      type: object
+      required: [id, state]
+      properties:
+        id: { type: string, format: uuid }
+        state:
+          type: string
+          enum: [pending, dispatching, dispatched, claimed, completed, failed]
+
+    ModelVersion:
+      type: object
+      required: [id, model_id, name, model_class, version, framework, status, submitted_at, submitted_by, artifact, evaluation_intent]
+      properties:
+        id: { type: string, format: uuid }
+        model_id: { type: string, format: uuid }
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        framework: { type: string }
+        status: { $ref: '#/components/schemas/ModelStatus' }
+        submitted_at: { type: string, format: date-time }
+        submitted_by: { type: string }
+        artifact: { $ref: '#/components/schemas/ArtifactReceipt' }
+        evaluation_intent: { $ref: '#/components/schemas/JobIntentRef' }
+
+    ModelDetail:
+      allOf:
+        - $ref: '#/components/schemas/ModelVersion'
+        - type: object
+          properties:
+            declared_sources:
+              type: array
+              items: { type: string }
+            card_markdown: { type: string, nullable: true }
+            missing_card_fields:
+              type: array
+              items: { type: string }
+
+    GoldenSetRef:
+      type: object
+      properties:
+        id: { type: string, format: uuid, nullable: true }
+        version: { type: string, nullable: true }
+        checksum: { type: string, nullable: true }
+
+    EvaluationRun:
+      type: object
+      required: [id, model_version_id, started_at, infra_ok, golden_set]
+      properties:
+        id: { type: string, format: uuid }
+        model_version_id: { type: string, format: uuid }
+        verdict: { $ref: '#/components/schemas/Verdict' }
+        golden_set: { $ref: '#/components/schemas/GoldenSetRef' }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        infra_ok: { type: boolean }
+        flag_trigger: { type: string, nullable: true }
+        job_intent_id: { type: string, format: uuid }
+
+    Coverage:
+      type: object
+      required: [expected_count, received_count, scored_count, missing_count, duplicate_count, unexpected_count, valid, issues]
+      properties:
+        expected_count: { type: integer, minimum: 0 }
+        received_count: { type: integer, minimum: 0 }
+        scored_count: { type: integer, minimum: 0 }
+        missing_count: { type: integer, minimum: 0 }
+        duplicate_count: { type: integer, minimum: 0 }
+        unexpected_count: { type: integer, minimum: 0 }
+        valid: { type: boolean }
+        issues:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              sample_ids: { type: array, items: { type: string } }
+
+    Evaluator:
+      type: object
+      required: [name, version, metric_contract, configuration, dataset_checksum]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        metric_contract: { type: string, example: '002.1' }
+        configuration: { type: object, additionalProperties: true }
+        dataset_checksum: { type: string }
+        label_map_digest: { type: string, nullable: true }
+
+    TierResult:
+      type: object
+      required: [tier, metrics, passed, coverage, evaluator, dataset_checksum]
+      properties:
+        tier: { type: string, enum: [capability, domain_stress, operational_safety] }
+        condition: { type: string, nullable: true, enum: [clean, rain, low_light, fog] }
+        metrics: { type: object, additionalProperties: true }
+        threshold: { type: object, nullable: true, additionalProperties: true }
+        passed: { type: boolean, nullable: true }
+        coverage: { $ref: '#/components/schemas/Coverage' }
+        evaluator: { $ref: '#/components/schemas/Evaluator' }
+        evidence_ref: { type: string }
+        evidence_digest: { type: string }
+        dataset_checksum: { type: string }
+
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/EvaluationRun'
+        - type: object
+          required: [tier_results]
+          properties:
+            tier_results:
+              type: array
+              items: { $ref: '#/components/schemas/TierResult' }
+
+    GoldenSetManifest:
+      type: object
+      required: [name, model_class, version, checksum, conditions, safety_critical, recall_floors, license, is_public, data_ref]
+      properties:
+        name: { type: string, minLength: 1 }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string, minLength: 1 }
+        checksum: { type: string }
+        conditions:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [clean, rain, low_light, fog] }
+        safety_critical: { type: array, uniqueItems: true, items: { type: string } }
+        recall_floors:
+          type: object
+          additionalProperties: { type: number, minimum: 0, maximum: 1 }
+        label_map: { type: object, additionalProperties: { type: string } }
+        license: { type: string }
+        is_public: { type: boolean, enum: [false] }
+        domain: { type: string, default: general }
+        data_ref: { type: string, description: Server-side path confined to configured dataset roots }
+
+    GoldenSet:
+      type: object
+      required: [id, name, model_class, version, checksum, reevaluation_intents]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        checksum: { type: string }
+        reevaluation_intents:
+          type: array
+          items: { $ref: '#/components/schemas/JobIntentRef' }
+
+    AdjudicationItem:
+      type: object
+      required: [run_id, model_version_id]
+      properties:
+        run_id: { type: string, format: uuid }
+        model_version_id: { type: string, format: uuid }
+        model_name: { type: string, nullable: true }
+        trigger: { type: string, nullable: true }
+        evidence_ref: { type: string }
+        flagged_at: { type: string, format: date-time, nullable: true }
+
+    DecisionRequest:
+      type: object
+      required: [decision, rationale]
+      additionalProperties: false
+      properties:
+        decision: { $ref: '#/components/schemas/Decision' }
+        rationale: { type: string, minLength: 1, maxLength: 10000 }
+
+    DecisionResult:
+      type: object
+      required: [run_id, decision, model_version_id, status, reviewer, decided_at]
+      properties:
+        run_id: { type: string, format: uuid }
+        decision: { $ref: '#/components/schemas/Decision' }
+        model_version_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ModelStatus' }
+        reviewer: { type: string, description: Verified principal identity derived from token }
+        decided_at: { type: string, format: date-time }
