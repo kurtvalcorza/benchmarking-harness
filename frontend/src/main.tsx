@@ -1,6 +1,8 @@
-import React from 'react'
+import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom'
+import { SignIn } from './auth/SignIn'
+import { clearToken, currentPrincipal } from './auth/session'
 import { AdjudicationQueue } from './pages/AdjudicationQueue'
 import { ModelDetail } from './pages/ModelDetail'
 import { Review } from './pages/Review'
@@ -8,24 +10,73 @@ import { Submit } from './pages/Submit'
 import './styles.css'
 
 function App() {
+  // re-render on sign-in/out by bumping a token
+  const [, setTick] = useState(0)
+  const refresh = () => setTick((n) => n + 1)
+  const principal = currentPrincipal()
+
+  if (!principal) return <SignIn onSignedIn={refresh} />
+
+  const canSubmit = principal.roles.includes('submitter')
+  const canAdjudicate =
+    principal.roles.includes('adjudicator') || principal.roles.includes('auditor')
+
+  function signOut() {
+    clearToken()
+    refresh()
+  }
+
   return (
     <BrowserRouter>
       <header className="topbar">
         <span className="brand">⚖️ Model Benchmarking Harness</span>
         <nav>
-          <Link to="/">Submit</Link>
-          <Link to="/adjudication">Adjudication queue</Link>
+          {canSubmit && <Link to="/">Submit</Link>}
+          {canAdjudicate && <Link to="/adjudication">Adjudication queue</Link>}
         </nav>
+        <span className="identity">
+          {principal.subject} · [{principal.roles.join(', ') || 'no roles'}]{' '}
+          <button className="link" onClick={signOut}>
+            sign out
+          </button>
+        </span>
       </header>
       <main>
         <Routes>
-          <Route path="/" element={<Submit />} />
+          <Route
+            path="/"
+            element={canSubmit ? <Submit /> : <Forbidden action="submit models" />}
+          />
           <Route path="/models/:id" element={<ModelDetail />} />
-          <Route path="/adjudication" element={<AdjudicationQueue />} />
-          <Route path="/adjudication/:runId" element={<Review />} />
+          <Route
+            path="/adjudication"
+            element={
+              canAdjudicate ? <AdjudicationQueue /> : <Forbidden action="read the queue" />
+            }
+          />
+          <Route
+            path="/adjudication/:runId"
+            element={
+              principal.roles.includes('adjudicator') ? (
+                <Review />
+              ) : (
+                <Forbidden action="record decisions" />
+              )
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </BrowserRouter>
+  )
+}
+
+function Forbidden({ action }: { action: string }) {
+  return (
+    <p className="error">
+      Your signed-in identity is not authorized to {action}. Sign in with a token
+      that carries the required role.
+    </p>
   )
 }
 

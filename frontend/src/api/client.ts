@@ -17,6 +17,14 @@ export type ModelStatus =
 export type Decision = 'approve' | 'reject' | 'request_changes'
 export type Condition = 'clean' | 'rain' | 'low_light' | 'fog'
 
+export interface ArtifactReceipt {
+  id: string
+  sha256: string
+  byte_count: number
+  original_filename: string
+  finalized_at: string
+}
+
 export interface ModelVersion {
   id: string
   model_id: string
@@ -26,6 +34,8 @@ export interface ModelVersion {
   framework: string
   status: ModelStatus
   submitted_at: string
+  submitted_by: string
+  artifact?: ArtifactReceipt | null
 }
 
 export interface ModelDetail extends ModelVersion {
@@ -89,12 +99,25 @@ export interface AdjudicationItem {
   flagged_at: string | null
 }
 
+import { clearToken, getToken } from '../auth/session'
+
 const BASE = '/api'
 
+export class AuthRequiredError extends Error {}
+export class ForbiddenError extends Error {}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init)
+  const token = getToken()
+  const headers = new Headers(init?.headers)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const res = await fetch(`${BASE}${path}`, { ...init, headers })
   if (!res.ok) {
     const body = await res.text()
+    if (res.status === 401) {
+      clearToken() // stale/absent token → force re-authentication
+      throw new AuthRequiredError(body || 'authentication required')
+    }
+    if (res.status === 403) throw new ForbiddenError(body || 'not authorized')
     throw new Error(`${res.status}: ${body}`)
   }
   return (await res.json()) as T
@@ -118,8 +141,17 @@ export const api = {
   },
   decide(
     runId: string,
-    body: { reviewer: string; decision: Decision; rationale: string },
-  ): Promise<{ run_id: string; decision: Decision; model_version_id: string; status: ModelStatus }> {
+    // the reviewer identity is the authenticated token subject (server-derived),
+    // never a client field — the UI no longer sends one
+    body: { decision: Decision; rationale: string },
+  ): Promise<{
+    run_id: string
+    decision: Decision
+    model_version_id: string
+    status: ModelStatus
+    reviewer: string
+    decided_at: string
+  }> {
     return req(`/adjudication/${runId}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

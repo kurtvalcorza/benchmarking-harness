@@ -168,9 +168,9 @@ description: "Test-first implementation tasks for production hardening and evalu
 - [ ] T072 [US6] Validate artifact/dataset/output paths against allowlisted resolved roots in `backend/engine/sandbox/runner.py`
 - [ ] T073 [US6] Separate runtime authority into a dedicated runner service/rootless-or-proxy boundary in `docker-compose.yml`, `backend/app/services/runner_client.py`, and `backend/runner/main.py`
 - [ ] T074 [US6] Ensure API/general worker containers have no unrestricted runtime socket and document production runner requirements in `README.md` and `specs/002-production-hardening/quickstart.md`
-- [ ] T075 [P] [US6] Add browser OIDC provider/session handling and bearer API client in `frontend/src/auth/`, `frontend/src/api/client.ts`, and `frontend/src/main.tsx`
-- [ ] T076 [P] [US6] Remove free-text reviewer UI and display verified signed-in identity in `frontend/src/pages/Review.tsx` and `frontend/tests/review.test.tsx`
-- [ ] T077 [US6] Add role-aware routes and authorization error states in `frontend/src/main.tsx`, `frontend/src/pages/Submit.tsx`, and `frontend/src/pages/AdjudicationQueue.tsx`
+- [x] T075 [P] [US6] Add browser OIDC provider/session handling and bearer API client in `frontend/src/auth/`, `frontend/src/api/client.ts`, and `frontend/src/main.tsx`
+- [x] T076 [P] [US6] Remove free-text reviewer UI and display verified signed-in identity in `frontend/src/pages/Review.tsx` and `frontend/tests/review.test.tsx`
+- [x] T077 [US6] Add role-aware routes and authorization error states in `frontend/src/main.tsx`, `frontend/src/pages/Submit.tsx`, and `frontend/src/pages/AdjudicationQueue.tsx`
 
 **Checkpoint**: production-like operation passes migration, auth, dependency, and runtime isolation checks.
 

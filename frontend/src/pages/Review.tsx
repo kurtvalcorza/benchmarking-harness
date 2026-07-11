@@ -1,7 +1,10 @@
-// T043 — review a flagged run: evidence + decision + rationale (FR-012/013)
+// T043/T076 — review a flagged run: evidence + decision + rationale (FR-012/013).
+// The reviewer identity is the AUTHENTICATED signed-in principal (server-derived),
+// never a free-text field — a client cannot self-assert who decided.
 import { FormEvent, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, Decision, RunDetail } from '../api/client'
+import { currentPrincipal } from '../auth/session'
 
 export function Review() {
   const { runId } = useParams()
@@ -9,6 +12,7 @@ export function Review() {
   const [run, setRun] = useState<RunDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const principal = currentPrincipal()
 
   useEffect(() => {
     if (runId) api.getRun(runId).then(setRun).catch((e) => setError(String(e)))
@@ -22,7 +26,6 @@ export function Review() {
     setError(null)
     try {
       const out = await api.decide(runId, {
-        reviewer: String(form.get('reviewer')),
         decision: String(form.get('decision')) as Decision,
         rationale: String(form.get('rationale')),
       })
@@ -86,11 +89,11 @@ export function Review() {
       </ul>
 
       <h3>Decision</h3>
+      <p className="muted">
+        Recording as <strong>{principal?.subject ?? 'unknown'}</strong> (verified
+        signed-in identity — this becomes the permanent reviewer of record).
+      </p>
       <form className="stack" onSubmit={onSubmit}>
-        <label>
-          Reviewer
-          <input name="reviewer" required placeholder="you@example.com" />
-        </label>
         <label>
           Decision
           <select name="decision" defaultValue="reject">
