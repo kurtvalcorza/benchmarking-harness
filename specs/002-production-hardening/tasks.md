@@ -20,7 +20,7 @@ description: "Test-first implementation tasks for production hardening and evalu
 - [ ] T002 [P] Upgrade supported Vite/Vitest and regenerate `frontend/package-lock.json`; record resolved versions in `specs/002-production-hardening/validation.md`
 - [ ] T003 [P] Add typed environment configuration (environment, auth, upload, DB, queue, runner, grounding) in `backend/app/services/config.py`
 - [ ] T004 [P] Add configuration unit tests, including production fail-closed combinations, in `backend/tests/unit/test_config.py`
-- [ ] T005 Add `pip-audit`, full `npm audit`, lockfile verification, OpenAPI validation, and migration tests to `.github/workflows/ci.yml` and `Makefile`
+- [ ] T005 Add `pip-audit`, `npm audit --audit-level=high` (the FR-027 high/critical gate, not bare `npm audit`), lockfile verification, OpenAPI validation, and migration tests to `.github/workflows/ci.yml` and `Makefile`
 - [ ] T006 Pin GitHub Actions to immutable SHAs with release comments in `.github/workflows/ci.yml`, `.github/workflows/claude.yml`, and `.github/workflows/claude-code-review.yml`
 - [ ] T007 Pin API/sandbox base images and install from locked inputs in `docker/api.Dockerfile` and `docker/sandbox.Dockerfile`
 
@@ -39,12 +39,15 @@ description: "Test-first implementation tasks for production hardening and evalu
 - [ ] T012 Extend SQLModel entities for receipts, coverage/evaluator fields, job intents/attempts, and audit identity in `backend/app/db/models.py`
 - [ ] T013 Create Feature 002 schema/backfill migration in `backend/migrations/versions/0002_production_hardening.py`
 - [ ] T014 Replace production `create_all` startup with schema-revision checks while preserving explicit ephemeral-test setup in `backend/app/db/repositories.py`, `backend/app/main.py`, and `backend/app/services/schema_check.py`
+- [ ] T014a Add the `postgres` service and a `production` Compose profile (grouping `postgres`, `redis`, and the runner boundary added in T073) to `docker-compose.yml` and `.env.example`, so the migration and outage validation commands in `quickstart.md` are runnable
 - [ ] T015 [P] Add PostgreSQL test fixtures and transactional cleanup in `backend/tests/conftest_postgres.py`
 - [ ] T016 [P] **[test-first]** Add JWT issuer/audience/algorithm/time/JWKS rotation tests in `backend/tests/unit/test_auth_tokens.py`
 - [ ] T017 [P] **[test-first]** Add endpoint `401`/`403` role-matrix tests in `backend/tests/contract/test_authorization.py`
 - [ ] T018 Implement typed `Principal`, OIDC discovery/JWKS cache, token validation, and role mapping in `backend/app/services/auth.py`
 - [ ] T019 Implement FastAPI bearer/role/object-authorization dependencies in `backend/app/api/auth.py`
 - [ ] T020 Protect all non-health routers and add authenticated readiness in `backend/app/main.py`, `backend/app/api/models.py`, `backend/app/api/runs.py`, `backend/app/api/golden_sets.py`, and `backend/app/api/adjudication.py`
+- [ ] T020a **[test-first]** Reject Golden Set registration whose `data_ref` does not resolve beneath the configured data/sample roots (path containment after symlink resolution, `422`) in `backend/app/api/golden_sets.py`, with tests in `backend/tests/contract/test_golden_set_path_containment.py` — enforce at registration, not only in the runner (T072)
+- [ ] T020b Add the governance/auditor-scoped `GET /golden-sets/{id}` re-evaluation-status read (object-scoped to the requester's own registrations) in `backend/app/api/golden_sets.py`, with authorization tests in `backend/tests/contract/test_authorization.py`
 - [ ] T021 Propagate authenticated actor/issuer/request ID into sanitized audit records in `backend/app/services/audit.py` and route handlers
 - [ ] T022 Add explicit dev-token helper and production-mode refusal in `scripts/dev_token.py` and `backend/tests/contract/test_dev_auth_refusal.py`
 

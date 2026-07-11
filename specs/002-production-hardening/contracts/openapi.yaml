@@ -119,7 +119,12 @@ paths:
   /runs/{runId}:
     get:
       summary: Read authorized run, coverage, evaluator, and evidence metadata
-      x-required-roles: [submitter, adjudicator, auditor]
+      description: >-
+        Governance is object-scoped to runs affected by Golden Test Sets it
+        registered (see the security-boundary "Read arbitrary run evidence"
+        row), so a governance user can inspect the re-evaluation runs their
+        registration triggered.
+      x-required-roles: [submitter, governance, adjudicator, auditor]
       parameters:
         - name: runId
           in: path
@@ -154,6 +159,29 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Name/version already exists }
         '422': { description: Manifest, license, path containment, checksum, or floor validation failed }
+
+  /golden-sets/{id}:
+    get:
+      summary: Read a registered Golden Test Set and the status of the re-evaluations it triggered
+      description: >-
+        Lets a governance user inspect, after registration, the durable
+        re-evaluation intents/runs their Golden Set triggered (the run evidence
+        itself is read via GET /runs/{runId}). Auditors may read all.
+      x-required-roles: [governance, auditor]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Golden Test Set with its re-evaluation intents/run references
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GoldenSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Not found }
 
   /adjudication/queue:
     get:

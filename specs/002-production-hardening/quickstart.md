@@ -33,6 +33,9 @@ Expected:
 
 ```bash
 docker compose --profile production up -d postgres redis runner
+# migrations and the schema check run in this shell, which does not inherit the
+# Compose service environment, so point them at the running PostgreSQL first
+export HARNESS_DATABASE_URL="postgresql+psycopg://harness:harness@localhost:5432/harness"
 uv run alembic -c backend/alembic.ini upgrade head
 uv run python -m app.services.schema_check
 ```
@@ -47,6 +50,9 @@ Expected:
 ## 3. Create local test identities
 
 ```bash
+# the helper refuses to mint tokens unless dev auth is enabled, so set it first
+export HARNESS_ENV=development
+export HARNESS_AUTH_MODE=dev
 uv run python scripts/dev_token.py --subject alice --role submitter
 uv run python scripts/dev_token.py --subject grace --role governance
 uv run python scripts/dev_token.py --subject adi --role adjudicator
@@ -58,10 +64,10 @@ The helper is available only with `HARNESS_AUTH_MODE=dev` and refuses `HARNESS_E
 ## 4. Run the API and dispatcher
 
 ```bash
-$env:HARNESS_ENV = "development"
-$env:HARNESS_AUTH_MODE = "dev"
-$env:HARNESS_DATABASE_URL = "postgresql+psycopg://harness:harness@localhost:5432/harness"
-$env:HARNESS_REDIS_URL = "redis://localhost:6379/0"
+export HARNESS_ENV=development
+export HARNESS_AUTH_MODE=dev
+export HARNESS_DATABASE_URL="postgresql+psycopg://harness:harness@localhost:5432/harness"
+export HARNESS_REDIS_URL="redis://localhost:6379/0"
 uv run uvicorn app.main:app --app-dir backend --port 8000
 ```
 
@@ -84,7 +90,7 @@ Expected authorization probes:
 Set a small limit for the test:
 
 ```bash
-$env:HARNESS_MAX_UPLOAD_BYTES = "1024"
+export HARNESS_MAX_UPLOAD_BYTES=1024
 ```
 
 Submit a 1,024-byte fixture and a 1,025-byte fixture through the authenticated endpoint.
@@ -177,7 +183,9 @@ cd frontend
 npm run lint
 npm run build
 npm test
-npm audit
+# policy (FR-027) blocks only unexcepted high/critical advisories; bare
+# `npm audit` fails on any severity, so gate at the documented level
+npm audit --audit-level=high
 cd ..
 docker compose config --quiet
 uv run pip-audit

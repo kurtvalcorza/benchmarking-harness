@@ -49,11 +49,14 @@ Add optional fields:
 
 | Field | Type | Rules |
 |---|---|---|
-| `subject` | string | Required stable `iss + sub` identity key |
+| `subject` | string | Required stable OIDC `sub` claim (raw token subject) |
 | `issuer` | URI | Must equal configured issuer |
+| `principal_key` | string | Derived `issuer + "\|" + subject`; the canonical identity used for audit, `submitted_by`/`reviewer`, and object authorization |
 | `display` | string/null | Optional email/name for UI only |
 | `roles` | set of enum | Subset of `submitter`, `governance`, `adjudicator`, `auditor` |
 | `token_id` | string/null | Optional hashable audit correlation; raw token never stored |
+
+`subject` is the raw `sub` claim so it matches token subjects during object authorization; the composite `principal_key` (matching the security-boundary contract) is the single value persisted for identity — never store `subject` pre-composed with the issuer, or the two representations diverge.
 
 ### PredictionCoverage
 

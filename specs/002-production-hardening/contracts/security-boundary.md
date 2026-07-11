@@ -5,13 +5,17 @@
 
 ## Identity contract
 
-Production requests use `Authorization: Bearer <access-token>`. The validator accepts a token only when:
+Production requests use `Authorization: Bearer <access-token>`. Authentication and authorization are separate stages: authentication validates the token and maps an identity; authorization then decides whether that identity may perform the requested operation.
+
+The validator authenticates a token only when:
 
 - its signature validates against a key from the configured OIDC issuer;
 - `iss` and `aud` match configuration;
 - `exp` and `nbf` are valid within configured clock skew;
 - its algorithm is explicitly allowed;
-- it contains a stable subject and at least one recognized role for the requested operation.
+- it contains a stable subject.
+
+Recognized roles from the token are mapped onto the resulting principal, but a valid token that carries no role required for the requested operation is **authenticated** and then **denied at authorization** — `403`, not rejected as an invalid token with `401` (see Failure semantics). This keeps the role-matrix scenarios correct: e.g. a valid submitter token used on Golden Set registration authenticates, then returns `403`.
 
 The application derives:
 
@@ -29,6 +33,7 @@ Raw tokens and token payloads are not persisted. Display/email claims are non-au
 | Read own model/card/history | yes | no | related flagged cases | all |
 | Read arbitrary run evidence | no | affected registrations | related flagged cases | all |
 | Register Golden Test Set | no | yes | no | no |
+| Read Golden Set + its re-evaluation status | no | own registrations | no | all |
 | Read adjudication queue | no | no | yes | yes (read-only) |
 | Record adjudication | no | no | yes | no |
 | Read security/audit metadata | no | limited to own actions | related decisions | yes |
