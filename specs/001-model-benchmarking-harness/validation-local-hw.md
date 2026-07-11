@@ -5,6 +5,11 @@ server 29.5.3, WSL backend) + NVIDIA RTX 5070 Ti Laptop GPU (torch
 2.11.0+cu128). Complements [validation.md](./validation.md), whose two recorded
 deviations — no docker daemon, synthetic-only data — are both closed here.
 
+> Baseline: the sweep below ran against `31fa4bd`. The second-round Codex
+> fixes (`9bc3579..d89f69a`) landed mid-sweep and independently address
+> findings F3/F4/F5/F7 below; the "Rebased head" section at the end records
+> the re-validation on top of them.
+
 ## Suite & gates (Windows)
 
 - **64/64 backend tests pass** (after fix F1 below; before it, 14 failed).
@@ -63,38 +68,88 @@ Native runner in `HARNESS_SANDBOX_MODE=docker`:
   real (non-`--synthetic`) fetch path crashed on the first sample. This path
   had never been executed before this record.
 
-## Findings (not fixed here)
+## Findings
 
-- **F3 — compose worker can't use the docker sandbox (missing dep):** the api
-  image installs only base deps; `docker` SDK is `[ml]`-only. Auto-detection
-  (`import docker`) fails → **silent fallback to subprocess mode** — verified
-  live (evidence records `sandbox_mode: subprocess`). The docker-socket mount
-  in `docker-compose.yml`, whose comment states the sandbox purpose, never
-  engages.
-- **F4 — compose docker-mode is broken even with the SDK installed:** the
-  worker passes its *own container's* paths (`/srv/backend`, tempdirs) as
+Found live at `31fa4bd`; F3/F4/F5/F7 were independently fixed by the
+second-round Codex commits that landed mid-sweep (see "Rebased head" below
+for the on-hardware re-validation of those fixes).
+
+- **F3 — compose worker silently fell back to subprocess mode:** the api
+  image installs only base deps; `docker` SDK is `[ml]`-only, so auto-detect
+  (`import docker`) failed — verified live (evidence records
+  `sandbox_mode: subprocess`) while the compose comment promised docker
+  isolation. *Addressed at `d89f69a`*: explicit `HARNESS_SANDBOX_MODE: docker`
+  fails loudly instead of downgrading, and `docker>=7.0` moved from `[ml]`
+  into core deps so the worker image actually has it.
+- **F4 — compose docker-mode was broken even with the SDK installed:** the
+  worker passed its *own container's* paths (`/srv/backend`, tempdirs) as
   bind sources; the daemon resolves them on *its* filesystem → the sibling
-  sandbox container gets an empty `/srv/backend` →
+  sandbox container got an empty `/srv/backend` →
   `ModuleNotFoundError: No module named 'engine'` → `infra_ok=false`
-  (reproduced live). Fix direction: share code/artifacts/out via named
-  volumes (volume-name keys in the SDK `volumes` dict) or daemon-visible
-  host paths.
-- **F5 — sandbox image can't run real models, and has no GPU:** it ships
-  numpy/pillow (+ CPU torch at best) — no ultralytics/timm/onnxruntime — so
-  `framework=pytorch|onnx` artifacts fail inside docker mode; and
-  `docker_container_config()` requests no `device_requests` (`--gpus`), so
-  docker-mode inference is CPU-only by construction. Real-weights + GPU runs
-  are currently only possible via the subprocess sandbox.
-- **F6 — no label-space canonicalization for real models:** a COCO-trained
-  YOLO emits `person`/`car`; golden sets use `pedestrian`/`vehicle`/
-  `traffic_sign` → mAP 0.0 / recall 0.0 across the board. The stub adapter
-  generates predictions *from ground truth*, so no committed test can catch
-  this. A per-model (or per-adapter) label-mapping layer is needed before any
-  real model can pass Tier 1.
-- **F7 — quickstart's compose + `seed_demo.py` combo cannot work as written**
-  on any OS: the script sends a host path as `data_ref`, but the API resolves
-  it server-side (inside the container) → 422. Workaround used here:
-  register golden sets with the in-container path (`/srv/samples/...`).
-- *(minor)* `fetch_open_images.py` detection filtering admits
+  (reproduced live). *Addressed at `d89f69a`* via `HARNESS_HOSTPATH_MAP` +
+  `HARNESS_SANDBOX_WORKDIR` + host bind mounts. Both `C:/...` and `/c/...`
+  forms of `${PWD}` resolve through Rancher Desktop's daemon (probed live),
+  so the map works from Git Bash or PowerShell (with `PWD` provided).
+- **F5 — sandbox image couldn't run real models, and still has no GPU:**
+  *addressed at `d89f69a`* for CPU (torch CPU + ultralytics + timm +
+  onnxruntime baked in). Still true: `docker_container_config()` requests no
+  `device_requests` (`--gpus`), so docker-mode inference is CPU-only by
+  construction; GPU runs require the subprocess sandbox, which since
+  `d89f69a` fails closed for non-stub frameworks unless
+  `HARNESS_ALLOW_UNSANDBOXED_FRAMEWORKS=1` (the GPU run above predates that
+  gate and would now need the explicit opt-in).
+- **F6 — no label-space canonicalization for real models (OPEN):** a
+  COCO-trained YOLO emits `person`/`car`; golden sets use `pedestrian`/
+  `vehicle`/`traffic_sign` → mAP 0.0 / recall 0.0 across the board. The stub
+  adapter generates predictions *from ground truth*, so no committed test can
+  catch this. A per-model (or per-adapter) label-mapping layer is needed
+  before any real model can pass Tier 1 against a canonical golden set.
+- **F7 — quickstart's compose + `seed_demo.py` combo could not work as
+  written** on any OS: the script sent a host path as `data_ref`, but the API
+  resolves it server-side (inside the container) → 422 (verified live).
+  *Addressed at `d89f69a`*: `--data-ref` / `--data` flags + compose header
+  documenting container paths.
+- *(minor, OPEN)* `fetch_open_images.py` detection filtering admits
   classification-only labels (`building`, `animal`) into detection
   annotations because both flows share `LABEL_CANON`.
+
+## Rebased head (`d89f69a` + this branch's F1/F2 fixes)
+
+- **Backend suite: 71/71 pass** on Windows (the Codex round added 7 tests).
+- **Compose docker-mode now runs real sandbox containers end-to-end.** With
+  the hostpath map corrected (F8 below), a stub detector went
+  `pending → evaluating → approved`, `infra_ok=true`, **6 tier results each
+  in its own ephemeral `--network none` sandbox container**, and the card
+  records `sandbox: docker`. This is the first time the full
+  worker → host-daemon → sibling-sandbox path has run green — the F3/F4 fixes
+  are confirmed on hardware.
+- **F5 (CPU) confirmed loadable, F9 blocks it:** the ML-enabled sandbox image
+  builds and imports ultralytics/timm/onnxruntime, but a real `yolo11n.pt`
+  still can't be evaluated in docker mode — see F9.
+
+### New findings from the rebased-head sweep
+
+- **F8 — `${PWD}` hostpath map yields a daemon-invalid path on Docker/Rancher
+  Desktop for Windows.** The daemon runs inside a WSL VM, so the worker's
+  sibling-container bind sources must be `/mnt/c/...`. `${PWD}` from a Windows
+  shell expands to `C:/Users/...`; docker-py in the Linux worker builds the
+  bind string `C:/Users/...:/srv/backend:ro`, which the daemon rejects
+  (`invalid volume specification`, reproduced live). Worse, the `/c/Users/...`
+  form is accepted **but mounts empty** (silent — would resurface F4's
+  `ModuleNotFoundError`); only `/mnt/c/...` mounts the real contents (all
+  three forms probed live from inside the worker). Fix direction: derive the
+  map from the daemon-visible mount, or document `/mnt/<drive>/...` for
+  Desktop-on-Windows. Worked around here via `docker-compose.override.yml`
+  (uncommitted; host-specific). *(On a native-Linux host `${PWD}` is already
+  daemon-visible, so this only bites Desktop/WSL setups.)*
+- **F9 — real `.pt`/`.onnx` can't load in docker mode: the artifact is
+  bind-mounted at the extension-less path `/mnt/artifact`.** Ultralytics (and
+  onnxruntime) dispatch on file extension, so `/mnt/artifact` is "not a
+  supported model format" → `infra_ok=false` (reproduced live with
+  `yolo11n.pt`). The stub adapter reads JSON regardless of extension, so no
+  committed test or scenario catches this. Fix direction: mount preserving the
+  suffix (e.g. `/mnt/artifact.pt`) or hand the adapter the real name. Combined
+  with F5's missing `--gpus`, real models in docker mode are blocked on both
+  extension and GPU; the subprocess sandbox remains the only path for real
+  weights (and since `d89f69a` needs `HARNESS_ALLOW_UNSANDBOXED_FRAMEWORKS=1`
+  for them).

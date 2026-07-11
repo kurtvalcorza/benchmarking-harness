@@ -54,6 +54,10 @@ Thumbs.db
 # --- Local runtime state ---
 harness.db
 results/
+# host-specific compose overrides (e.g. the /mnt/c hostpath map for
+# Docker/Rancher Desktop on Windows — see specs/001 validation-local-hw.md F8)
+docker-compose.override.yml
+docker-compose.override.yaml
 
 # --- Node / frontend ---
 node_modules/
