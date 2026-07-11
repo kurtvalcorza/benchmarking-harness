@@ -480,10 +480,18 @@ def _persist_tier_results(
         grounding_samples = evidence.pop("grounding_samples", None)
         grounding = metrics.get("grounding")
         if grounding_samples and isinstance(grounding, dict) and grounding.get("status") == "measured":
-            g_ref, g_digest = stage.stage(
+            _g_ref, g_digest = stage.stage(
                 i, f"{o.tier.value}-grounding", {"method": grounding.get("method"), "samples": grounding_samples}
             )
-            grounding = {**grounding, "evidence_ref": g_ref, "evidence_digest": g_digest}
+            # CONTENT-addressed reference: identical model+data → identical
+            # grounding evidence, so the ref must be reproducible (a per-run file
+            # path would break SC-004). The artifact at `_g_ref` hashes to
+            # g_digest, so `sha256:<digest>` resolves to it in a content store.
+            grounding = {
+                **grounding,
+                "evidence_ref": f"sha256:{g_digest}",
+                "evidence_digest": g_digest,
+            }
             metrics["grounding"] = grounding
         payload = {
             "tier": o.tier.value,
