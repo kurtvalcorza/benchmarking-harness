@@ -27,17 +27,19 @@ METRIC_CONTRACT = "harness-metrics/1"
 
 # Per-class evaluator identity + configuration recorded on every scored result
 # so a number is reproducible and its meaning unambiguous (data-model
-# EvaluatorProvenance). The detection evaluator is the harness's dependency-light
-# greedy-IoU AP — named honestly, NOT COCO; the pinned pycocotools reference
-# evaluator is the remaining US2 slice (T034).
+# EvaluatorProvenance). Detection AP now comes from the pinned pycocotools
+# reference evaluator (T034); the greedy approximation survives only as the
+# non-gating `diagnostic_precision_recall_product` cross-check (T035).
 _EVALUATORS: dict[ModelClass, dict] = {
     ModelClass.detection: {
-        "name": "harness.detection.greedy_iou_ap",
+        "name": "pycocotools.cocoeval",
         "metric_contract": METRIC_CONTRACT,
         "configuration": {
+            "standard": "coco",
             "iou_thresholds": [round(0.5 + 0.05 * i, 2) for i in range(10)],
-            "matching": "greedy_per_image",
-            "ap": "single_point_precision_times_recall",
+            "max_detections": [1, 10, 100],
+            "ap_metric": "coco_ap_50_95",
+            "diagnostic_metric": "diagnostic_precision_recall_product",
         },
     },
     ModelClass.classification: {
@@ -60,7 +62,24 @@ def evaluator_provenance(model_class: ModelClass, *, harness_version: str) -> di
             "configuration": {},
             "version": harness_version,
         }
-    return {**base, "configuration": dict(base["configuration"]), "version": harness_version}
+    configuration = dict(base["configuration"])
+    if model_class is ModelClass.detection:
+        # record the PINNED reference-evaluator version so a COCO number is
+        # reproducible against the exact implementation that produced it
+        configuration["reference_version"] = _pycocotools_version()
+    return {**base, "configuration": configuration, "version": harness_version}
+
+
+def _pycocotools_version() -> str:
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("pycocotools")
+        except PackageNotFoundError:
+            return "unavailable"
+    except Exception:  # noqa: BLE001 — provenance must never crash a run
+        return "unknown"
 
 
 def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> list[Prediction]:

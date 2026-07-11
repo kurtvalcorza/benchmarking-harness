@@ -174,7 +174,7 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
 
 
 def _primary_metric(metrics: dict) -> str | None:
-    for key in ("map_50_95", "top1", "grounding_score", "miou", "f1"):
+    for key in ("coco_ap_50_95", "map_50_95", "top1", "grounding_score", "miou", "f1"):
         if key in metrics:
             return key
     return next(iter(metrics), None)

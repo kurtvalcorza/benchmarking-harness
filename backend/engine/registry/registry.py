@@ -27,7 +27,7 @@ class Benchmark:
 
 REGISTRY: dict[ModelClass, Benchmark] = {
     ModelClass.detection: Benchmark(
-        dataset="open-images-det-sample", metric="map_50_95", reference="COCO / LVIS mAP"
+        dataset="open-images-det-sample", metric="coco_ap_50_95", reference="COCO / LVIS mAP"
     ),
     ModelClass.classification: Benchmark(
         dataset="open-images-cls-sample", metric="top1", reference="ImageNet top-1"

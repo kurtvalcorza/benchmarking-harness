@@ -5,11 +5,15 @@
 # Tier keys: capability | domain_stress | operational_safety
 detection:
   capability:
-    metric: map_50_95
+    # coco_ap_50_95 = COCO AP over IoU 0.50:0.05:0.95 from the pinned
+    # pycocotools reference evaluator (metric-evidence.md §Metric identity).
+    # The retained diagnostic_precision_recall_product approximation is NEVER
+    # bound to a ratified threshold.
+    metric: coco_ap_50_95
     minimum: 0.25
     ratified: true
   domain_stress:
-    metric: map_50_95
+    metric: coco_ap_50_95
     minimum: 0.20
     ratified: true
   operational_safety:
