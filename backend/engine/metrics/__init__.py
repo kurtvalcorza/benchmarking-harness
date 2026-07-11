@@ -5,11 +5,62 @@ Tier 2 surfaces it for every safety-critical class in the golden-set manifest
 from app.db.enums import ModelClass
 from engine.adapters.base import Prediction
 from engine.metrics.classification import evaluate_classification
+from engine.metrics.coverage import compute_coverage
 from engine.metrics.detection import evaluate_detection
+
+__all__ = [
+    "SCORED_CLASSES",
+    "METRIC_CONTRACT",
+    "canonicalize",
+    "evaluate",
+    "evaluator_provenance",
+    "safety_critical_recall",
+    "compute_coverage",  # re-exported for the tier scorers
+]
 
 # Classes with an implemented scorer. The submission API refuses the other
 # registered classes up front (clear 422) instead of infra-failing mid-run.
 SCORED_CLASSES = {ModelClass.detection, ModelClass.classification}
+
+# Versioned metric contract identifier stamped into evaluator provenance (T036).
+METRIC_CONTRACT = "harness-metrics/1"
+
+# Per-class evaluator identity + configuration recorded on every scored result
+# so a number is reproducible and its meaning unambiguous (data-model
+# EvaluatorProvenance). The detection evaluator is the harness's dependency-light
+# greedy-IoU AP — named honestly, NOT COCO; the pinned pycocotools reference
+# evaluator is the remaining US2 slice (T034).
+_EVALUATORS: dict[ModelClass, dict] = {
+    ModelClass.detection: {
+        "name": "harness.detection.greedy_iou_ap",
+        "metric_contract": METRIC_CONTRACT,
+        "configuration": {
+            "iou_thresholds": [round(0.5 + 0.05 * i, 2) for i in range(10)],
+            "matching": "greedy_per_image",
+            "ap": "single_point_precision_times_recall",
+        },
+    },
+    ModelClass.classification: {
+        "name": "harness.classification.topk",
+        "metric_contract": METRIC_CONTRACT,
+        "configuration": {"topk": [1, 5], "averaging": "macro", "missing_is_incorrect": True},
+    },
+}
+
+
+def evaluator_provenance(model_class: ModelClass, *, harness_version: str) -> dict:
+    """Return EvaluatorProvenance (name/version/contract/configuration) for the
+    class's scorer. `dataset_checksum` and `label_map_digest` are stamped by the
+    caller that owns those values (orchestrator persistence)."""
+    base = _EVALUATORS.get(model_class)
+    if base is None:
+        return {
+            "name": f"harness.{model_class.value}.unimplemented",
+            "metric_contract": METRIC_CONTRACT,
+            "configuration": {},
+            "version": harness_version,
+        }
+    return {**base, "configuration": dict(base["configuration"]), "version": harness_version}
 
 
 def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> list[Prediction]:

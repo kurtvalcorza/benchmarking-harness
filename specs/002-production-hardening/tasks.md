@@ -78,16 +78,16 @@ description: "Test-first implementation tasks for production hardening and evalu
 
 **Independent Test**: Incomplete/duplicate/invalid classification and detection batches plus direct reference comparison.
 
-- [ ] T029 [P] [US2] **[test-first]** Add complete/missing/duplicate/unexpected classification fixtures in `backend/tests/unit/test_classification_coverage.py`
-- [ ] T030 [P] [US2] **[test-first]** Add NaN/infinite/malformed prediction validation tests in `backend/tests/unit/test_prediction_validation.py`
+- [x] T029 [P] [US2] **[test-first]** Add complete/missing/duplicate/unexpected classification fixtures in `backend/tests/unit/test_classification_coverage.py`
+- [x] T030 [P] [US2] **[test-first]** Add NaN/infinite/malformed prediction validation tests in `backend/tests/unit/test_prediction_validation.py`
 - [ ] T031 [P] [US2] **[test-first]** Add deterministic direct-COCO reference comparison fixtures in `backend/tests/unit/test_detection_coco.py`
-- [ ] T032 [US2] Implement reusable prediction coverage/shape validation and typed issue codes in `backend/engine/metrics/coverage.py`
-- [ ] T033 [US2] Rewrite classification evaluation around expected annotation IDs and missing-as-incorrect semantics in `backend/engine/metrics/classification.py`
+- [x] T032 [US2] Implement reusable prediction coverage/shape validation and typed issue codes in `backend/engine/metrics/coverage.py`
+- [x] T033 [US2] Rewrite classification evaluation around expected annotation IDs and missing-as-incorrect semantics in `backend/engine/metrics/classification.py`
 - [ ] T034 [US2] Replace COCO-named detection approximation with pinned pycocotools evaluation and deterministically mapped inputs in `backend/engine/metrics/detection.py`
 - [ ] T035 [US2] Rename any retained lightweight diagnostic metric and migrate thresholds/cards from ambiguous `map_50_95` naming in `backend/thresholds.yaml`, `backend/engine/scoring.py`, and `backend/engine/cards/templates/model_card.md.j2`
-- [ ] T036 [US2] Add coverage/evaluator provenance to `TierOutcome`, Tier 1, Tier 2, persistence, and API schemas in `backend/engine/tiers/tier1_capability.py`, `backend/engine/tiers/tier2_stress.py`, `backend/app/services/orchestrator.py`, and `backend/app/api/schemas.py`
+- [x] T036 [US2] Add coverage/evaluator provenance to `TierOutcome`, Tier 1, Tier 2, persistence, and API schemas in `backend/engine/tiers/tier1_capability.py`, `backend/engine/tiers/tier2_stress.py`, `backend/app/services/orchestrator.py`, and `backend/app/api/schemas.py`
 - [ ] T037 [US2] Display coverage discrepancies and evaluator identity in `frontend/src/pages/ModelDetail.tsx` and add tests in `frontend/tests/model-detail.test.tsx`
-- [ ] T038 [US2] Add end-to-end regression proving omitted predictions cannot improve a verdict in `backend/tests/integration/test_metric_integrity.py`
+- [x] T038 [US2] Add end-to-end regression proving omitted predictions cannot improve a verdict in `backend/tests/integration/test_metric_integrity.py`
 
 **Checkpoint**: metric names, denominators, and evaluator evidence are defensible and reproducible.
 

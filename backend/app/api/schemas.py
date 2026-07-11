@@ -40,6 +40,9 @@ class TierResultOut(BaseModel):
     passed: bool | None = None
     evidence_ref: str = ""
     dataset_checksum: str = ""
+    coverage: dict | None = None
+    evaluator: dict | None = None
+    evidence_digest: str | None = None
 
 
 class GoldenSetRef(BaseModel):

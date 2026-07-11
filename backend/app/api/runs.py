@@ -49,6 +49,9 @@ def get_run(
                 passed=t.passed,
                 evidence_ref=t.evidence_ref,
                 dataset_checksum=t.dataset_checksum,
+                coverage=t.coverage,
+                evaluator=t.evaluator,
+                evidence_digest=t.evidence_digest,
             )
             for t in tiers
         ],
