@@ -36,6 +36,10 @@ class UnsupportedArtifactType(Exception):
     """Filename extension does not match the declared framework → 415."""
 
 
+class EmptyArtifact(Exception):
+    """The stream carried zero bytes; a receipt requires byte_count > 0 → 422."""
+
+
 class StorageFull(Exception):
     """The filesystem rejected the write (e.g. ENOSPC) → 507."""
 
@@ -103,6 +107,12 @@ def stage_upload(fileobj, filename: str | None, framework: str, cfg: AppConfig) 
     except OSError as e:
         part.unlink(missing_ok=True)
         raise StorageFull(f"failed to stage upload: {e}") from e
+
+    if total == 0:
+        # a receipt requires byte_count > 0; an empty stream is a bad request,
+        # not a finalized artifact (data-model ArtifactReceipt invariant)
+        part.unlink(missing_ok=True)
+        raise EmptyArtifact("uploaded artifact is empty (0 bytes)")
 
     return StagedArtifact(
         temp_path=part, sha256=hasher.hexdigest(), byte_count=total, original_filename=safe

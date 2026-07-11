@@ -12,6 +12,7 @@ class ArtifactReceiptOut(BaseModel):
     sha256: str
     byte_count: int
     original_filename: str
+    finalized_at: datetime
 
 
 class ModelVersionOut(BaseModel):

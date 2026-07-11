@@ -31,6 +31,17 @@ class _RaisingReader:
         return b"x" * n
 
 
+def test_empty_upload_is_422(client):
+    r = client.post(
+        "/models",
+        data={"name": "empty", "model_class": "detection", "framework": "stub", "version": "v1"},
+        files={"weights": ("w.json", b"", "application/json")},
+        headers=bearer("s@example.com", ["submitter"]),
+    )
+    assert r.status_code == 422
+    assert "empty" in r.text.lower()
+
+
 def test_wrong_extension_is_415(client):
     r = client.post(
         "/models",

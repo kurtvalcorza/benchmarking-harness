@@ -174,7 +174,9 @@ def _authenticate_oidc(token: str, cfg: AppConfig) -> Principal:
             algorithms=algorithms,
             audience=cfg.oidc_audience,
             issuer=cfg.oidc_issuer,
-            options={"require": ["exp", "iat", "sub"]},
+            # security-boundary.md: production tokens must carry a valid exp AND
+            # nbf (the not-before time-window bound), plus a stable subject.
+            options={"require": ["exp", "nbf", "iat", "sub"]},
         )
     except jwt.PyJWTError as e:
         raise AuthError(f"invalid token: {e}") from e

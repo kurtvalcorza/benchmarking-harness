@@ -144,6 +144,9 @@ def downgrade() -> None:
     with op.batch_alter_table("tierresult") as batch:
         for col in ("evidence_digest", "evaluator", "coverage"):
             batch.drop_column(col)
+    op.drop_index("ix_goldentestset_registered_by", "goldentestset")
+    with op.batch_alter_table("goldentestset") as batch:
+        batch.drop_column("registered_by")
     op.drop_index("ix_modelversion_submitted_by", "modelversion")
     with op.batch_alter_table("modelversion") as batch:
         batch.drop_constraint("fk_modelversion_artifact_receipt", type_="foreignkey")

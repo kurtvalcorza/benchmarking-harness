@@ -119,6 +119,8 @@ def decide(
         rationale=body.rationale,
     )
     session.add(record)  # the decision is recorded IN THE SAME transaction (FR-013)
+    reviewer = record.reviewer
+    decided_at = record.decided_at  # captured pre-commit (session may expire it)
 
     version.status = apply_adjudication(version.status, body.decision)
     session.add(version)
@@ -147,4 +149,7 @@ def decide(
         "decision": body.decision.value,
         "model_version_id": version.id,
         "status": version.status.value,
+        # DecisionResult contract: the verified reviewer + when it was decided
+        "reviewer": reviewer,
+        "decided_at": decided_at.isoformat(),
     }

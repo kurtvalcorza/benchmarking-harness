@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app.api.auth import require_roles
+from app.api.auth import authorize_run_read, require_roles
 from app.api.schemas import GoldenSetRef, RunDetailOut, TierResultOut
 from app.db.enums import Role
 from app.db.models import EvaluationRun, TierResult
@@ -24,6 +24,9 @@ def get_run(
     run = session.get(EvaluationRun, run_id)
     if run is None:
         raise HTTPException(404, "run not found")
+    # role gate passed; now enforce the per-run object scope (a governance or
+    # adjudicator token may only read runs it is related to)
+    authorize_run_read(principal, run, session)
     tiers = session.exec(
         select(TierResult).where(TierResult.run_id == run_id)
     ).all()

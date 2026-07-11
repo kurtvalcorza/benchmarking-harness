@@ -17,7 +17,9 @@ from fastapi import Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from app.db.enums import ModelStatus, Role, Verdict
-from app.db.models import EvaluationRun, ModelVersion
+from app.db.models import EvaluationRun, GoldenTestSet, ModelVersion
+from app.db.repositories import get_session
+from app.services import audit
 from app.services import auth as auth_service
 from app.services.config import AppConfig, load_config
 
@@ -65,9 +67,12 @@ def require_roles(*roles: Role):
     `roles`. Authentication (401) happens first, in `get_principal`."""
 
     def _dep(
+        request: Request,
         principal: auth_service.Principal = Depends(get_principal),
+        session: Session = Depends(get_session),
     ) -> auth_service.Principal:
         if roles and not principal.has_any(*roles):
+            _audit_denial(session, request, principal, sorted(r.value for r in roles))
             raise HTTPException(
                 403,
                 f"requires one of roles {sorted(r.value for r in roles)}; "
@@ -76,6 +81,63 @@ def require_roles(*roles: Role):
         return principal
 
     return _dep
+
+
+def _audit_denial(
+    session: Session, request: Request, principal: auth_service.Principal, required: list[str]
+) -> None:
+    """FR-005: a denied privileged attempt emits sanitized security telemetry.
+
+    Best-effort: an audit-write failure must never convert a 403 into a 500. The
+    request ends at the 403, so committing this record cannot race a handler
+    transaction.
+    """
+    try:
+        audit.record(
+            session,
+            actor=principal.principal_key,
+            action="authorization-denied",
+            target_ref=f"{request.method} {request.url.path}",
+            request_id=get_request_id(request),
+            principal_issuer=principal.issuer,
+            outcome="denied",
+            metadata={"required_roles": required},
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+
+
+def authorized_version_ids(
+    principal: auth_service.Principal, versions: list[ModelVersion], session: Session
+) -> list[str]:
+    """The subset of `versions` this principal may read (history object scope,
+    security-boundary.md): auditor→all, submitter→own, adjudicator→flagged."""
+    if principal.has_any(Role.auditor):
+        return [v.id for v in versions]
+    allowed: list[str] = []
+    for v in versions:
+        owns = principal.has_any(Role.submitter) and v.submitted_by == principal.principal_key
+        flagged = principal.has_any(Role.adjudicator) and _has_flagged_run(session, v.id)
+        if owns or flagged:
+            allowed.append(v.id)
+    return allowed
+
+
+def authorize_run_read(
+    principal: auth_service.Principal, run: EvaluationRun, session: Session
+) -> None:
+    """Run-evidence object scope (security-boundary.md): auditor→all,
+    adjudicator→related flagged case, governance→affected registration."""
+    if principal.has_any(Role.auditor):
+        return
+    if principal.has_any(Role.adjudicator) and _has_flagged_run(session, run.model_version_id):
+        return
+    if principal.has_any(Role.governance) and run.golden_set_id:
+        gs = session.get(GoldenTestSet, run.golden_set_id)
+        if gs is not None and gs.registered_by == principal.principal_key:
+            return
+    raise HTTPException(403, "not authorized to read this run's evidence (object scope)")
 
 
 def _has_flagged_run(session: Session, version_id: str) -> bool:

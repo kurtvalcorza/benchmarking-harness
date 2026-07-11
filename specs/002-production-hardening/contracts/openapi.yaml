@@ -175,10 +175,10 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Golden Test Set with its re-evaluation intents/run references
+          description: Golden Test Set identity with its re-evaluation intents/run references
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GoldenSet' }
+              schema: { $ref: '#/components/schemas/GoldenSetStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Not found }
@@ -437,16 +437,43 @@ components:
 
     GoldenSet:
       type: object
-      required: [id, name, model_class, version, checksum, reevaluation_intents]
+      required: [id, name, model_class, version, checksum, reevaluation_flagged]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         model_class: { $ref: '#/components/schemas/ModelClass' }
         version: { type: string }
         checksum: { type: string }
+        conditions:
+          type: array
+          items: { type: string, enum: [clean, rain, low_light, fog] }
+        safety_critical_classes:
+          type: array
+          items: { type: string }
+        recall_floors:
+          type: object
+          additionalProperties: { type: number }
+        reevaluation_flagged:
+          type: array
+          description: model_version_ids flagged for re-evaluation by this registration
+          items: { type: string, format: uuid }
+
+    GoldenSetStatus:
+      type: object
+      required: [id, name, model_class, version, checksum, evaluated_run_ids, reevaluation_intents]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        checksum: { type: string }
+        evaluated_run_ids:
+          type: array
+          items: { type: string, format: uuid }
         reevaluation_intents:
           type: array
-          items: { $ref: '#/components/schemas/JobIntentRef' }
+          description: model_version_ids with an open re-evaluation claim for this set
+          items: { type: string, format: uuid }
 
     AdjudicationItem:
       type: object

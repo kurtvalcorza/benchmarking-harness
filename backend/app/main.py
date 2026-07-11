@@ -2,7 +2,7 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import adjudication, golden_sets, models, runs
@@ -56,7 +56,9 @@ def healthz() -> dict:
 
 
 @app.get("/readyz")
-def readyz(principal: Principal = Depends(require_roles(Role.auditor))) -> dict:
+def readyz(
+    response: Response, principal: Principal = Depends(require_roles(Role.auditor))
+) -> dict:
     """Authenticated dependency + schema readiness (security-boundary.md).
 
     Requires the auditor role so the reported dependency posture is not exposed
@@ -79,6 +81,10 @@ def readyz(principal: Principal = Depends(require_roles(Role.auditor))) -> dict:
     except Exception:
         database = "unavailable"
     ok = database == "ready" and schema in ("current",)
+    if not ok:
+        # readiness probes key off the status code (openapi 503), so a broken
+        # instance must not report 200
+        response.status_code = 503
     return {
         "ok": ok,
         "database": database,
