@@ -24,11 +24,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = BACKEND_ROOT.parent
 
 DOCKER_IMAGE = os.environ.get("HARNESS_SANDBOX_IMAGE", "benchmarking-harness-sandbox:latest")
 CPU_CAP = float(os.environ.get("HARNESS_SANDBOX_CPUS", "2"))
 MEM_CAP = os.environ.get("HARNESS_SANDBOX_MEM", "4g")
 TIMEOUT_S = int(os.environ.get("HARNESS_SANDBOX_TIMEOUT", "1800"))
+# non-root identity the model process runs as inside the container (matches the
+# `nonroot` user baked into docker/sandbox.Dockerfile)
+SANDBOX_UID_GID = os.environ.get("HARNESS_SANDBOX_USER", "65532:65532")
+SECCOMP_PROFILE = Path(
+    os.environ.get("HARNESS_SANDBOX_SECCOMP", str(REPO_ROOT / "docker" / "sandbox-seccomp.json"))
+)
+
+
+def _seccomp_opt() -> str | None:
+    """Return the `seccomp=<json>` security_opt from the pinned profile, or None
+    if the profile file is absent (docker then applies its default profile)."""
+    try:
+        return "seccomp=" + SECCOMP_PROFILE.read_text()
+    except OSError:
+        return None
 
 
 class SandboxError(RuntimeError):
@@ -153,19 +169,30 @@ def docker_container_config(
     # container: adapters dispatch on suffix, so a bare /mnt/artifact would
     # make every real .pt/.onnx submission unloadable in docker mode (F9)
     artifact_target = f"/mnt/artifact/{Path(artifact).name}"
+    # T071: no-new-privileges + the pinned seccomp profile (security_opt);
+    # cap_drop ALL, a non-root user, a read-only root fs, no network, and a
+    # bounded noexec/nosuid/nodev tmpfs are defence-in-depth around untrusted
+    # model code (security-boundary.md).
+    security_opt = ["no-new-privileges:true"]
+    seccomp = _seccomp_opt()
+    if seccomp:
+        security_opt.append(seccomp)
     return {
         "image": DOCKER_IMAGE,
         "command": ["python", "-m", "engine.sandbox.job", "--spec", "/mnt/out/spec.json"],
         "network_disabled": True,  # --network none
         "network_mode": "none",
         "read_only": True,  # read-only root fs
+        "user": SANDBOX_UID_GID,  # non-root
+        "cap_drop": ["ALL"],
+        "security_opt": security_opt,
         "volumes": {
             _host_path(str(BACKEND_ROOT)): {"bind": "/srv/backend", "mode": "ro"},
             _host_path(artifact): {"bind": artifact_target, "mode": "ro"},
             _host_path(dataset_root): {"bind": "/mnt/dataset", "mode": "ro"},
             _host_path(str(out_dir)): {"bind": "/mnt/out", "mode": "rw"},
         },
-        "tmpfs": {"/tmp": "rw,size=256m"},
+        "tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=256m"},
         "working_dir": "/srv/backend",
         "environment": {"PYTHONPATH": "/srv/backend"},
         "nano_cpus": int(CPU_CAP * 1e9),
@@ -193,6 +220,15 @@ def _run_docker(
         "out": "/mnt/out/result.json",
     }
     (out_dir / "spec.json").write_text(json.dumps(spec))
+    # the container runs as the non-root UID 65532, but this host-owned tmp out
+    # dir is 0700/worker-owned — without this the sandbox cannot traverse the
+    # bind mount to read spec.json or write result.json (docker evals would all
+    # infra-fail). The dir is ephemeral, per-run, and removed afterwards.
+    try:
+        os.chmod(out_dir, 0o777)
+        os.chmod(out_dir / "spec.json", 0o644)
+    except OSError:
+        pass
     cfg = docker_container_config(framework, artifact, model_class, dataset_root, out_dir)
     try:
         client = docker.from_env()

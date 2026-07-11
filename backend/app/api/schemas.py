@@ -7,6 +7,14 @@ from pydantic import BaseModel, Field
 from app.db.enums import Condition, Decision, ModelClass, ModelStatus, Tier, Verdict
 
 
+class ArtifactReceiptOut(BaseModel):
+    id: str
+    sha256: str
+    byte_count: int
+    original_filename: str
+    finalized_at: datetime
+
+
 class ModelVersionOut(BaseModel):
     id: str
     model_id: str
@@ -16,6 +24,8 @@ class ModelVersionOut(BaseModel):
     framework: str
     status: ModelStatus
     submitted_at: datetime
+    submitted_by: str
+    artifact: ArtifactReceiptOut | None = None
 
 
 class ModelDetailOut(ModelVersionOut):
@@ -32,6 +42,9 @@ class TierResultOut(BaseModel):
     passed: bool | None = None
     evidence_ref: str = ""
     dataset_checksum: str = ""
+    coverage: dict | None = None
+    evaluator: dict | None = None
+    evidence_digest: str | None = None
 
 
 class GoldenSetRef(BaseModel):
@@ -86,8 +99,20 @@ class GoldenSetOut(BaseModel):
     reevaluation_flagged: list[str] = []
 
 
+class GoldenSetStatusOut(BaseModel):
+    id: str
+    name: str
+    model_class: ModelClass
+    version: str
+    checksum: str
+    evaluated_run_ids: list[str] = []
+    reevaluation_intents: list[str] = []  # model_version_ids with an open claim
+
+
 class DecisionIn(BaseModel):
-    reviewer: str = Field(min_length=1)
+    # FR-013/T026: the reviewer identity is the authenticated principal, never a
+    # client-supplied field. A `reviewer` in the body is ignored (extra keys are
+    # dropped) so no caller can self-assert who decided.
     decision: Decision
     rationale: str = Field(min_length=1)
 

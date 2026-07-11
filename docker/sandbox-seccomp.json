@@ -1,0 +1,45 @@
+{
+  "_comment": "Pinned seccomp profile for the no-egress model sandbox (T071, security-boundary.md). Allow-by-default with an explicit block-list of privilege-escalation / host-manipulation / kernel syscalls, so untrusted model code cannot mount, load kernel modules, ptrace, change namespaces, or reconfigure the host. Combined with cap_drop ALL, no-new-privileges, a non-root user, a read-only root fs, and --network none it is defence-in-depth. A stricter default-deny allow-list profile validated on hardware can replace this later.",
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {
+      "names": [
+        "mount",
+        "umount",
+        "umount2",
+        "pivot_root",
+        "chroot",
+        "ptrace",
+        "process_vm_readv",
+        "process_vm_writev",
+        "kexec_load",
+        "kexec_file_load",
+        "init_module",
+        "finit_module",
+        "delete_module",
+        "reboot",
+        "swapon",
+        "swapoff",
+        "setns",
+        "unshare",
+        "bpf",
+        "perf_event_open",
+        "open_by_handle_at",
+        "name_to_handle_at",
+        "add_key",
+        "request_key",
+        "keyctl",
+        "acct",
+        "settimeofday",
+        "clock_settime",
+        "clock_adjtime",
+        "adjtimex",
+        "quotactl",
+        "nfsservctl",
+        "personality",
+        "vhangup"
+      ],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 """T037 — Scenario B: safety-critical failure → flagged → human decision → rejected.
 Constitution I end-to-end."""
 
-from tests.conftest import WEAK_DET, det_manifest, register_golden, submit_model
+from tests.conftest import WEAK_DET, bearer, det_manifest, register_golden, submit_model
 
 
 def test_flagged_to_pending_to_reject_flow(client):
@@ -30,14 +30,12 @@ def test_flagged_to_pending_to_reject_flow(client):
     ]
     assert breaches, "the flag must be backed by a concrete per-class breach"
 
-    # 3. recorded human decision moves it — and is permanent
+    # 3. recorded human decision moves it — and is permanent. The reviewer on
+    # the record is the AUTHENTICATED subject, never a client-supplied field.
     r = client.post(
         f"/adjudication/{item['run_id']}/decision",
-        json={
-            "reviewer": "adjudicator@example.com",
-            "decision": "reject",
-            "rationale": "pedestrian recall below the ratified floor; not deployable",
-        },
+        json={"decision": "reject", "rationale": "pedestrian recall below the ratified floor; not deployable"},
+        headers=bearer("adjudicator@example.com", ["adjudicator"]),
     )
     assert r.status_code == 200
     detail = client.get(f"/models/{mv['id']}").json()

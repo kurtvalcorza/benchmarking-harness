@@ -39,7 +39,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Readiness' }
-        '503': { description: Database, schema, queue dispatcher, or runner not ready }
+        '503': { description: "Database, schema, queue dispatcher, or runner not ready" }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -158,7 +158,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: Name/version already exists }
-        '422': { description: Manifest, license, path containment, checksum, or floor validation failed }
+        '422': { description: "Manifest, license, path containment, checksum, or floor validation failed" }
 
   /golden-sets/{id}:
     get:
@@ -175,10 +175,10 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Golden Test Set with its re-evaluation intents/run references
+          description: Golden Test Set identity with its re-evaluation intents/run references
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GoldenSet' }
+              schema: { $ref: '#/components/schemas/GoldenSetStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Not found }
@@ -220,7 +220,7 @@ paths:
               schema: { $ref: '#/components/schemas/DecisionResult' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: Not pending, incomplete lineage, superseded, or already decided }
+        '409': { description: "Not pending, incomplete lineage, superseded, or already decided" }
         '422': { description: Invalid decision or empty rationale }
 
 components:
@@ -310,7 +310,9 @@ components:
 
     ModelVersion:
       type: object
-      required: [id, model_id, name, model_class, version, framework, status, submitted_at, submitted_by, artifact, evaluation_intent]
+      # evaluation_intent is provided once the durable JobIntent outbox lands (US4);
+      # until then the response carries verified identity + the artifact receipt.
+      required: [id, model_id, name, model_class, version, framework, status, submitted_at, submitted_by, artifact]
       properties:
         id: { type: string, format: uuid }
         model_id: { type: string, format: uuid }
@@ -390,7 +392,10 @@ components:
 
     TierResult:
       type: object
-      required: [tier, metrics, passed, coverage, evaluator, dataset_checksum]
+      # coverage + evaluator are present on scored Tier 1/Tier 2 results; Tier 3
+      # (operational safety) does not score per-item predictions, so they are
+      # optional/nullable rather than universally required.
+      required: [tier, metrics, passed, dataset_checksum]
       properties:
         tier: { type: string, enum: [capability, domain_stress, operational_safety] }
         condition: { type: string, nullable: true, enum: [clean, rain, low_light, fog] }
@@ -437,16 +442,43 @@ components:
 
     GoldenSet:
       type: object
-      required: [id, name, model_class, version, checksum, reevaluation_intents]
+      required: [id, name, model_class, version, checksum, reevaluation_flagged]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         model_class: { $ref: '#/components/schemas/ModelClass' }
         version: { type: string }
         checksum: { type: string }
+        conditions:
+          type: array
+          items: { type: string, enum: [clean, rain, low_light, fog] }
+        safety_critical_classes:
+          type: array
+          items: { type: string }
+        recall_floors:
+          type: object
+          additionalProperties: { type: number }
+        reevaluation_flagged:
+          type: array
+          description: model_version_ids flagged for re-evaluation by this registration
+          items: { type: string, format: uuid }
+
+    GoldenSetStatus:
+      type: object
+      required: [id, name, model_class, version, checksum, evaluated_run_ids, reevaluation_intents]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        checksum: { type: string }
+        evaluated_run_ids:
+          type: array
+          items: { type: string, format: uuid }
         reevaluation_intents:
           type: array
-          items: { $ref: '#/components/schemas/JobIntentRef' }
+          description: model_version_ids with an open re-evaluation claim for this set
+          items: { type: string, format: uuid }
 
     AdjudicationItem:
       type: object

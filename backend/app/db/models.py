@@ -11,7 +11,22 @@ from datetime import UTC, datetime
 from sqlalchemy import UniqueConstraint
 from sqlmodel import JSON, Column, Field, SQLModel
 
-from app.db.enums import Condition, Decision, ModelClass, ModelStatus, Tier, Verdict
+from app.db.enums import (
+    Condition,
+    Decision,
+    JobKind,
+    JobOutcome,
+    JobReason,
+    JobState,
+    ModelClass,
+    ModelStatus,
+    Tier,
+    Verdict,
+)
+
+# Identity assigned to Feature 001 rows that predate authenticated submission
+# (data-model.md migration step 3): they carry no verified principal.
+LEGACY_PRINCIPAL = "legacy:feature-001"
 
 
 def _uuid() -> str:
@@ -45,6 +60,14 @@ class ModelVersion(SQLModel, table=True):
     declared_sources: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     status: ModelStatus = Field(default=ModelStatus.pending)
     submitted_at: datetime = Field(default_factory=utcnow)
+    # FR-001: the verified principal that submitted this version (principal_key =
+    # issuer|subject). Legacy rows carry LEGACY_PRINCIPAL until backfilled.
+    submitted_by: str = Field(default=LEGACY_PRINCIPAL, index=True)
+    # FR-006: the immutable receipt for the finalized artifact upload (feature
+    # 002). Nullable during migration; set on every new bounded upload.
+    artifact_receipt_id: str | None = Field(
+        default=None, foreign_key="artifactreceipt.id"
+    )
 
 
 class GoldenTestSet(SQLModel, table=True):
@@ -67,6 +90,9 @@ class GoldenTestSet(SQLModel, table=True):
     is_public: bool = False  # MUST be false (never-public invariant)
     data_ref: str = ""  # local path to fetched data (gitignored)
     registered_at: datetime = Field(default_factory=utcnow)
+    # FR-020: the governance principal that registered this set; scopes the
+    # "own registrations" status read (security-boundary.md). Legacy default.
+    registered_by: str = Field(default=LEGACY_PRINCIPAL, index=True)
 
 
 class EvaluationRun(SQLModel, table=True):  # 🔒 append-only
@@ -109,6 +135,10 @@ class TierResult(SQLModel, table=True):  # 🔒 append-only
     passed: bool | None = None  # null when pending
     evidence_ref: str = ""  # artifacts backing the numbers (Constitution V)
     dataset_checksum: str = ""  # copied from the golden set (FR-018)
+    # feature 002 evaluation integrity (data-model.md):
+    coverage: dict | None = Field(default=None, sa_column=Column(JSON))  # PredictionCoverage
+    evaluator: dict | None = Field(default=None, sa_column=Column(JSON))  # EvaluatorProvenance
+    evidence_digest: str | None = None  # SHA-256 of evidence_ref when non-empty
 
 
 class ModelCard(SQLModel, table=True):
@@ -129,7 +159,8 @@ class AdjudicationRecord(SQLModel, table=True):  # 🔒 append-only
     run_id: str = Field(foreign_key="evaluationrun.id", index=True)
     trigger: str
     evidence_ref: str = ""
-    reviewer: str  # required (FR-013)
+    reviewer: str  # required (FR-013); populated only from Principal.subject
+    reviewer_display: str | None = None  # non-authoritative display text (audit readability)
     decision: Decision
     rationale: str  # required, non-empty
     decided_at: datetime = Field(default_factory=utcnow)
@@ -142,6 +173,76 @@ class AuditEvent(SQLModel, table=True):  # 🔒 append-only
     target_ref: str
     checksum: str | None = None
     at: datetime = Field(default_factory=utcnow)
+    # feature 002 identity + telemetry (data-model.md). MUST NOT hold tokens or
+    # model payload bytes.
+    request_id: str | None = None
+    principal_issuer: str | None = None
+    outcome: str | None = None  # success | denied | failure
+    audit_metadata: dict | None = Field(default=None, sa_column=Column(JSON))
+
+
+class ArtifactReceipt(SQLModel, table=True):  # 🔒 immutable
+    """Proof that a bounded artifact upload streamed to disk and finalized.
+
+    Created inside the submission transaction (data-model.md); never updated or
+    deleted through application repositories.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    storage_ref: str = Field(unique=True)  # finalized digest-addressed path/key
+    original_filename: str = ""  # sanitized metadata only
+    byte_count: int  # >0 and <= configured maximum at ingestion
+    sha256: str = Field(index=True)  # lowercase hex
+    framework: str
+    submitted_by: str
+    finalized_at: datetime = Field(default_factory=utcnow)
+
+
+class JobIntent(SQLModel, table=True):
+    """Durable transactional-outbox record: submission/re-evaluation survives a
+    Redis outage and duplicate delivery (data-model.md, plan.md durable path).
+
+    NOT append-only — `state` advances through the transition table. Identity is
+    the deterministic `idempotency_key`: a duplicate create returns the existing
+    intent, and a duplicate transport delivery of `completed` is a no-op.
+    """
+
+    __table_args__ = (UniqueConstraint("idempotency_key"),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    kind: JobKind = Field(default=JobKind.evaluate_model_version)
+    model_version_id: str = Field(foreign_key="modelversion.id", index=True)
+    golden_set_id: str | None = Field(default=None, foreign_key="goldentestset.id")
+    reason: JobReason = Field(default=JobReason.submission)
+    idempotency_key: str = Field(index=True)
+    state: JobState = Field(default=JobState.pending, index=True)
+    attempt_count: int = 0
+    available_at: datetime = Field(default_factory=utcnow)  # retry/backoff eligibility
+    lease_owner: str | None = None  # dispatcher lease holder
+    leased_until: datetime | None = None
+    last_error: str | None = None  # sanitized bounded message
+    created_at: datetime = Field(default_factory=utcnow)
+    dispatched_at: datetime | None = None
+    claimed_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class JobAttempt(SQLModel, table=True):
+    """One claim/execution of a JobIntent. Terminalized in its own transaction,
+    then treated append-only."""
+
+    __table_args__ = (UniqueConstraint("job_intent_id", "attempt_number"),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    job_intent_id: str = Field(foreign_key="jobintent.id", index=True)
+    attempt_number: int  # starts at 1, unique within the intent
+    worker_id: str = ""
+    transport_job_id: str | None = None  # RQ identifier
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: datetime | None = None
+    outcome: JobOutcome | None = None
+    run_id: str | None = None  # EvaluationRun produced by successful completion
+    error_code: str | None = None
 
 
 APPEND_ONLY_TABLES = (
@@ -150,4 +251,5 @@ APPEND_ONLY_TABLES = (
     AdjudicationRecord,
     AuditEvent,
     ReevaluationClaim,
+    ArtifactReceipt,
 )

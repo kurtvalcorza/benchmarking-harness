@@ -1,6 +1,6 @@
 """T038 — adjudication queue + decision endpoint contract (FR-012/013)."""
 
-from tests.conftest import WEAK_DET, det_manifest, register_golden, submit_model
+from tests.conftest import WEAK_DET, bearer, det_manifest, register_golden, submit_model
 
 
 def _flagged_run(client) -> tuple[dict, dict]:
@@ -38,13 +38,11 @@ def test_decision_records_and_transitions(client):
 
 def test_approve_via_decision_is_allowed_and_recorded(client):
     mv, item = _flagged_run(client)
+    # the recorded reviewer is the AUTHENTICATED subject, never a body field
     r = client.post(
         f"/adjudication/{item['run_id']}/decision",
-        json={
-            "reviewer": "adjudicator@example.com",
-            "decision": "approve",
-            "rationale": "acceptable for the limited pilot deployment",
-        },
+        json={"decision": "approve", "rationale": "acceptable for the limited pilot deployment"},
+        headers=bearer("adjudicator@example.com", ["adjudicator"]),
     )
     assert r.status_code == 200
     detail = client.get(f"/models/{mv['id']}").json()

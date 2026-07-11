@@ -10,8 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.api.auth import get_request_id, require_roles
 from app.api.schemas import AdjudicationItemOut, DecisionIn
-from app.db.enums import Decision, ModelStatus, Tier, Verdict
+from app.db.enums import Decision, ModelStatus, Role, Tier, Verdict
 from app.db.models import (
     AdjudicationRecord,
     EvaluationRun,
@@ -21,6 +22,7 @@ from app.db.models import (
 )
 from app.db.repositories import get_session
 from app.services import audit
+from app.services.auth import Principal
 from app.services.orchestrator import _regenerate_card
 from app.services.state_machine import apply_adjudication
 
@@ -37,7 +39,10 @@ def _latest_run_id(session: Session, model_version_id: str) -> str | None:
 
 
 @router.get("/adjudication/queue", response_model=list[AdjudicationItemOut])
-def queue(session: Session = Depends(get_session)) -> list[AdjudicationItemOut]:
+def queue(
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(require_roles(Role.adjudicator, Role.auditor)),
+) -> list[AdjudicationItemOut]:
     runs = session.exec(
         select(EvaluationRun).where(EvaluationRun.verdict == Verdict.pending_adjudication)
     ).all()
@@ -66,7 +71,11 @@ def queue(session: Session = Depends(get_session)) -> list[AdjudicationItemOut]:
 
 @router.post("/adjudication/{run_id}/decision")
 def decide(
-    run_id: str, body: DecisionIn, session: Session = Depends(get_session)
+    run_id: str,
+    body: DecisionIn,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(require_roles(Role.adjudicator)),
+    request_id: str = Depends(get_request_id),
 ) -> dict:
     run = session.get(EvaluationRun, run_id)
     if run is None:
@@ -104,19 +113,25 @@ def decide(
             t.evidence_ref
             for t in session.exec(select(TierResult).where(TierResult.run_id == run.id)).all()
         ),
-        reviewer=body.reviewer,
+        reviewer=principal.subject,  # FR-013/T026: verified, not client-supplied
+        reviewer_display=principal.display,
         decision=body.decision,
         rationale=body.rationale,
     )
     session.add(record)  # the decision is recorded IN THE SAME transaction (FR-013)
+    reviewer = record.reviewer
+    decided_at = record.decided_at  # captured pre-commit (session may expire it)
 
     version.status = apply_adjudication(version.status, body.decision)
     session.add(version)
     audit.record(
         session,
-        actor=body.reviewer,
+        actor=principal.principal_key,
         action=f"adjudication:{body.decision.value}",
         target_ref=f"run:{run.id}",
+        request_id=request_id,
+        principal_issuer=principal.issuer,
+        outcome="success",
     )
     try:
         session.commit()
@@ -134,4 +149,7 @@ def decide(
         "decision": body.decision.value,
         "model_version_id": version.id,
         "status": version.status.value,
+        # DecisionResult contract: the verified reviewer + when it was decided
+        "reviewer": reviewer,
+        "decided_at": decided_at.isoformat(),
     }

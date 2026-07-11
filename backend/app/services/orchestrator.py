@@ -346,25 +346,36 @@ def _reset_to_pending(version_id: str, reason: str) -> None:
 def _persist_tier_results(
     session: Session, run: EvaluationRun, outcomes: list[TierOutcome], golden
 ) -> None:
+    import hashlib
+
     ev_dir = results_dir() / "runs" / run.id
     ev_dir.mkdir(parents=True, exist_ok=True)
+    dataset_checksum = (golden.checksum if golden else "") or ""
     for i, o in enumerate(outcomes):
         evidence_path = ev_dir / f"{i:02d}-{o.tier.value}{'-' + o.condition if o.condition else ''}.json"
-        evidence_path.write_text(
-            json.dumps(
-                {
-                    "tier": o.tier.value,
-                    "condition": o.condition,
-                    "metrics": o.metrics,
-                    "threshold": o.threshold,
-                    "passed": o.passed,
-                    "evidence": o.evidence,
-                    "golden_set_checksum": golden.checksum if golden else None,
-                },
-                indent=2,
-                default=str,
-            )
+        # US2: the tier stamps evaluator.dataset_checksum with ITS OWN dataset
+        # (Tier 1 = benchmark, Tier 2 = Golden Set); only fill a missing value
+        # here, never overwrite the tier's correct one.
+        evaluator = dict(o.evaluator) if o.evaluator else None
+        if evaluator is not None and not evaluator.get("dataset_checksum"):
+            evaluator["dataset_checksum"] = dataset_checksum
+        payload = json.dumps(
+            {
+                "tier": o.tier.value,
+                "condition": o.condition,
+                "metrics": o.metrics,
+                "threshold": o.threshold,
+                "passed": o.passed,
+                "coverage": o.coverage,
+                "evaluator": evaluator,
+                "evidence": o.evidence,
+                "golden_set_checksum": golden.checksum if golden else None,
+            },
+            indent=2,
+            default=str,
         )
+        evidence_path.write_text(payload)
+        evidence_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         session.add(
             TierResult(
                 run_id=run.id,
@@ -373,8 +384,11 @@ def _persist_tier_results(
                 metrics=o.metrics,
                 threshold=o.threshold,
                 passed=o.passed,
+                coverage=o.coverage,
+                evaluator=evaluator,
                 evidence_ref=str(evidence_path),
-                dataset_checksum=(golden.checksum if golden else "") or "",
+                evidence_digest=evidence_digest,
+                dataset_checksum=dataset_checksum,
             )
         )
 

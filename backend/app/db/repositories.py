@@ -52,8 +52,26 @@ def get_engine():
         url = database_url()
         kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
         _engine = create_engine(url, **kwargs)
-        SQLModel.metadata.create_all(_engine)
+        _initialize_schema(_engine, url)
     return _engine
+
+
+def _initialize_schema(engine, url: str) -> None:
+    """Create the schema (dev/test) or verify the migration head (production).
+
+    Production runs Alembic migrations, so `create_all` is disabled there: it
+    would paper over a missing migration and drift from the real schema (T014).
+    The ephemeral SQLite path used by the offline demo and the test suite keeps
+    `create_all` for zero-setup startup.
+    """
+    from app.services.config import load_config
+    from app.services.schema_check import assert_production_schema_ready
+
+    cfg = load_config()
+    if cfg.is_production:
+        assert_production_schema_ready(engine, cfg)
+        return
+    SQLModel.metadata.create_all(engine)
 
 
 def reset_engine() -> None:

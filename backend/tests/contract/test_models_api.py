@@ -49,7 +49,7 @@ def test_unknown_framework_is_422(client):
     assert r.status_code == 422
 
 
-def test_duplicate_version_is_422(client):
+def test_duplicate_version_is_409(client):
     register_golden(client, det_manifest())
     submit_model(client, weights_path=HEALTHY_DET, name="dup", sources=["s"])
     with open(WEAK_DET, "rb") as f:
@@ -58,7 +58,7 @@ def test_duplicate_version_is_422(client):
             data={"name": "dup", "model_class": "detection", "framework": "stub", "version": "v1"},
             files={"weights": ("w.json", f)},
         )
-    assert r.status_code == 422
+    assert r.status_code == 409  # duplicate version is a conflict (openapi 002)
 
 
 def test_missing_provenance_is_captured_and_flagged_not_rejected_at_submit(client):

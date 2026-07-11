@@ -18,7 +18,7 @@ from engine.adapters.base import Prediction
 from engine.datasets import Dataset
 from engine.perturb.transforms import perturb_dataset
 from engine.sandbox.runner import run_inference
-from engine.tiers.tier1_capability import TierOutcome, check_threshold
+from engine.tiers.tier1_capability import HARNESS_VERSION, TierOutcome, check_threshold
 
 
 @dataclass
@@ -81,6 +81,7 @@ def run_tier2(
             preds = [Prediction.from_dict(p) for p in job.predictions]
             # F6: map model-emitted labels onto the golden set's label space
             preds = metrics_mod.canonicalize(preds, label_map or {})
+            coverage = metrics_mod.compute_coverage(preds, annotations).to_dict()
             m = metrics_mod.evaluate(model_class, preds, annotations)
             per_class, breach = metrics_mod.safety_critical_recall(
                 m, safety_classes, recall_floors
@@ -88,7 +89,15 @@ def run_tier2(
             m["safety_critical"] = per_class  # FR-009: never aggregate-only
             result.safety_breach = result.safety_breach or breach
             passed, thr_dict, unratified = check_threshold(m, threshold)
+            if not coverage["valid"]:
+                # untrusted output cannot pass a stress condition either
+                passed = False
+                m["coverage_invalid"] = True
             result.unratified = result.unratified or unratified
+            evaluator = metrics_mod.evaluator_provenance(
+                model_class, harness_version=HARNESS_VERSION
+            )
+            evaluator["dataset_checksum"] = golden.checksum()  # scored on the Golden Set
             result.outcomes.append(
                 TierOutcome(
                     tier=Tier.domain_stress,
@@ -97,6 +106,8 @@ def run_tier2(
                     threshold=thr_dict,
                     passed=passed,
                     unratified=unratified,
+                    coverage=coverage,
+                    evaluator=evaluator,
                     evidence={"sandbox_mode": job.sandbox_mode, "timing": job.timing},
                 )
             )
