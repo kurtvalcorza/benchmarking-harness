@@ -23,6 +23,11 @@ dependencies = [
     # docker SDK is a core dep (not just [ml]): the worker image must be able
     # to launch --network none sandbox containers, never silently fall back
     "docker>=7.0",
+    # production hardening (feature 002):
+    "pyjwt[crypto]>=2.8",  # OIDC bearer-token signature/claims validation
+    "httpx>=0.27",  # OIDC discovery + JWKS fetch (also used by tests)
+    "alembic>=1.13",  # schema migrations replace create_all in production
+    "psycopg[binary]>=3.1",  # PostgreSQL driver for the production outbox/store
 ]
 
 [project.optional-dependencies]
@@ -45,6 +50,8 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.4",
     "black>=24.0",
+    "pip-audit>=2.7",  # FR-027 dependency advisory gate (high/critical)
+    "openapi-spec-validator>=0.7",  # CI validation of contracts/openapi.yaml
 ]
 
 [tool.setuptools.packages.find]

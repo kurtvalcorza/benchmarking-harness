@@ -1,48 +1,105 @@
-# T062 — constitution gates (no-restricted-data, no-auto-approval, no-egress)
-# run on every push, plus the full backend + frontend suites.
+# CI — constitution gates + full suites + feature 002 security/reproducibility gates.
+#
+# Actions are pinned to immutable commit SHAs (T006) with the release tag in a
+# trailing comment, so a moved tag cannot swap the action out from under us
+# (supply-chain hardening, FR-027).
 name: ci
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   constitution-gates:
     name: constitution gates (I, II, IV)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - run: pip install -e "backend[dev]"
-      - name: "Gate: no restricted data in tree (Constitution II, T020)"
+      - name: "Gate: no restricted data in tree (Constitution II)"
         run: pytest tests/contract/test_no_restricted_data.py -q
         working-directory: backend
-      - name: "Gate: no auto-approval path (Constitution I, T019)"
+      - name: "Gate: no auto-approval path (Constitution I)"
         run: pytest tests/contract/test_no_auto_approval.py -q
         working-directory: backend
-      - name: "Gate: sandboxed runs have no egress (Constitution IV, T067)"
+      - name: "Gate: sandboxed runs have no egress (Constitution IV)"
         run: pytest tests/contract/test_sandbox_no_egress.py -q
         working-directory: backend
 
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - run: pip install -e "backend[dev]"
-      - run: ruff check backend
+      - run: ruff check backend scripts
       - run: pytest -q
         working-directory: backend
+
+  migrations:
+    name: migrations (empty + feature 001 baseline)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: harness
+          POSTGRES_PASSWORD: harness
+          POSTGRES_DB: harness
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U harness" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+      - run: pip install -e "backend[dev]"
+      - name: "Migration upgrade tests (empty DB + feature 001 baseline)"
+        run: pytest tests/migration -q
+        working-directory: backend
+        env:
+          HARNESS_TEST_POSTGRES_URL: postgresql+psycopg://harness:harness@localhost:5432/harness
+
+  security:
+    name: dependency + spec gates (FR-027)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - run: pip install -e "backend[dev]"
+      - name: "OpenAPI contract validates"
+        run: python -m openapi_spec_validator specs/002-production-hardening/contracts/openapi.yaml
+      - name: "pip-audit (advisories require a documented exception)"
+        run: pip-audit
+      - name: "Lockfile is in sync (npm ci must not rewrite package-lock.json)"
+        run: |
+          cd frontend
+          npm ci
+          git diff --exit-code package-lock.json
+      - name: "npm audit (block high/critical only, FR-027)"
+        run: cd frontend && npm audit --audit-level=high
 
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "22"
       - run: npm ci
