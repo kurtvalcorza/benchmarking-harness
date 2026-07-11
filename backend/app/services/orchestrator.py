@@ -95,6 +95,49 @@ def _claim_reevaluation(
     return True
 
 
+def recover_orphaned_reevaluations() -> list[str]:
+    """Re-enqueue retries whose claim committed but whose job was lost.
+
+    `_claim_reevaluation` durably commits the claim BEFORE `enqueue_evaluation`
+    runs, so a crash or broker outage in that window leaves a claim with no job
+    — and because claims are append-only, nothing can ever re-claim that pair.
+    This reconciles that gap: any claim with no evaluation run started at/after
+    it, for a version not currently `evaluating`, is re-enqueued. It runs at
+    startup (worker boot in rq mode, app lifespan in inline mode).
+
+    Idempotent: once the retry run persists (its `started_at` lands at/after the
+    claim's `created_at`) the pair is satisfied and skipped on the next pass. A
+    benign duplicate is possible if two recoverers race a pre-existing orphan;
+    that only ever adds a run, never loses one.
+    """
+    orphaned: list[str] = []
+    with Session(get_engine()) as session:
+        claims = session.exec(select(ReevaluationClaim)).all()
+        if not claims:
+            return orphaned
+        latest_claim_at: dict[str, object] = {}
+        for c in claims:
+            prev = latest_claim_at.get(c.model_version_id)
+            if prev is None or c.created_at > prev:
+                latest_claim_at[c.model_version_id] = c.created_at
+        latest_run_at: dict[str, object] = {}
+        for r in session.exec(select(EvaluationRun)).all():
+            prev = latest_run_at.get(r.model_version_id)
+            if prev is None or r.started_at > prev:
+                latest_run_at[r.model_version_id] = r.started_at
+        for vid, claim_at in latest_claim_at.items():
+            run_at = latest_run_at.get(vid)
+            if run_at is not None and run_at >= claim_at:
+                continue  # a run happened at/after the claim → the retry ran
+            version = session.get(ModelVersion, vid)
+            if version is None or version.status is ModelStatus.evaluating:
+                continue  # version gone, or a job is already in flight
+            orphaned.append(vid)
+    for vid in orphaned:
+        enqueue_evaluation(vid)
+    return orphaned
+
+
 def evaluate_version(version_id: str) -> str | None:
     """Run the full three-tier evaluation for a ModelVersion. Returns run id."""
     with Session(get_engine()) as session:

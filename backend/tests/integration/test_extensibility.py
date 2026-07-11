@@ -375,3 +375,46 @@ def test_registration_after_run_commit_is_not_enqueued_twice(client, monkeypatch
     assert len(history) == 2
     assert history[0]["golden_set"]["version"] is None
     assert history[1]["golden_set"]["version"] == "v1"
+
+
+def test_orphaned_claim_is_recovered_on_startup(client, monkeypatch):
+    """A claim commits but its enqueue is lost (crash/broker outage). Because
+    claims are append-only, no later trigger can re-claim the pair — the retry
+    would be stranded forever. recover_orphaned_reevaluations (run at worker/app
+    startup) reconciles it: it re-enqueues the version whose claim has no run
+    after it, and is a no-op once that retry has run."""
+    from app.services import orchestrator
+    from tests.conftest import HEALTHY_DET
+
+    mv = submit_model(client, weights_path=HEALTHY_DET, name="orphan", sources=["s"])
+    assert mv["status"] == "pending"  # no golden set yet → infra fail → pending
+
+    # simulate the lost enqueue: registration commits the claim (via
+    # reevaluate_for_golden_set) but the broker drops the job. A toggle (not
+    # monkeypatch.undo, which would also revert the fixture's inline-mode env)
+    # re-enables real enqueueing for the recovery step.
+    real_enqueue = orchestrator.enqueue_evaluation
+    drop = {"job": True}
+    monkeypatch.setattr(
+        orchestrator,
+        "enqueue_evaluation",
+        lambda vid: None if drop["job"] else real_enqueue(vid),
+    )
+    register_golden(client, det_manifest())
+    drop["job"] = False
+
+    # claim exists, but the retry never ran — still pending, still one run
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "pending"
+    assert len(client.get(f"/models/{mv['id']}/history").json()) == 1
+
+    # startup reconciliation reclaims the stranded retry
+    recovered = orchestrator.recover_orphaned_reevaluations()
+    assert mv["id"] in recovered
+    history = client.get(f"/models/{mv['id']}/history").json()
+    assert len(history) == 2
+    assert history[1]["golden_set"]["version"] == "v1"
+    assert client.get(f"/models/{mv['id']}").json()["status"] == "approved"
+
+    # idempotent: the retry run now satisfies the claim → nothing to recover
+    assert orchestrator.recover_orphaned_reevaluations() == []
+    assert len(client.get(f"/models/{mv['id']}/history").json()) == 2
