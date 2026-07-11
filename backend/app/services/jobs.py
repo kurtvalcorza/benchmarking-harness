@@ -30,9 +30,12 @@ from app.db.enums import JobKind, JobOutcome, JobReason, JobState
 from app.db.models import JobAttempt, JobIntent, as_utc, utcnow
 from app.db.repositories import get_engine
 
-# How long a claim holds an intent before the dispatcher may reclaim it. Matches
-# the sandbox wall-clock ceiling so a legitimately long run is never stolen.
-LEASE_SECONDS = int(os.environ.get("HARNESS_JOB_LEASE_SECONDS", "1800"))
+# How long a claim holds an intent before the dispatcher may reclaim it. A full
+# evaluation runs THREE tiers sequentially, each bounded by the sandbox
+# wall-clock ceiling (HARNESS_SANDBOX_TIMEOUT, default 1800s), so the lease must
+# cover ~3× that — matching the RQ job timeout (7200s) — or a legitimately long
+# but healthy run has its lease expire and gets spuriously reclaimed while alive.
+LEASE_SECONDS = int(os.environ.get("HARNESS_JOB_LEASE_SECONDS", "7200"))
 # Exponential backoff between retryable failures (bounded).
 RETRY_BASE_SECONDS = int(os.environ.get("HARNESS_JOB_RETRY_BASE_SECONDS", "30"))
 RETRY_CAP_SECONDS = int(os.environ.get("HARNESS_JOB_RETRY_CAP_SECONDS", "900"))
@@ -197,6 +200,11 @@ def fail_intent(
     with Session(get_engine()) as session:
         intent = session.get(JobIntent, intent_id)
         if intent is None:
+            return
+        if intent.state in (JobState.completed, JobState.failed):
+            # terminal guard: never resurrect an already-completed intent back to
+            # `pending` (a late/duplicate failure from a recursive inline tail must
+            # not re-run committed work — exactly-once)
             return
         attempt = session.get(JobAttempt, attempt_id) if attempt_id else None
         exhausted = intent.attempt_count >= MAX_ATTEMPTS

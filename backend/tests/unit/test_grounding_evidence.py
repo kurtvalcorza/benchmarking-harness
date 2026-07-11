@@ -117,6 +117,25 @@ def test_energy_inside_region_used_when_points_absent():
     assert ev.score == pytest.approx(0.7, abs=1e-6)
 
 
+def test_out_of_range_energy_is_invalid_not_measured():
+    """Per-sample energy fractions must be finite in [0,1]; an out-of-range value
+    cannot average into a measured pass."""
+    maps = [
+        {"image_id": f"img_{i}", "label": "car", "energy_inside": e}
+        for i, e in enumerate([2.0, 0.0, -0.5] + [0.5] * 22)
+    ]
+    ev = evaluate_grounding(
+        attributions=maps,
+        annotations=ANNOTATIONS,
+        approved_methods=("energy_inside_region",),
+        min_samples=20,
+        target_ref="sha256:golden",
+    )
+    assert ev.status == "unavailable"
+    assert ev.unavailable_reason == "invalid_evidence"
+    assert ev.score is None
+
+
 def test_unavailable_reason_is_validated():
     assert unavailable("unsupported_model_class").unavailable_reason == "unsupported_model_class"
     with pytest.raises(ValueError):

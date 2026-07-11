@@ -8,7 +8,8 @@ instead of discovering it by absence:
   large backlog of failed intents — both need the dispatcher / an operator.
 - *orphaned evidence*: staging directories left behind by a crash between
   ``EvidenceStage.stage`` and ``publish``/``discard`` — harmless bytes with no
-  DB row, safe to sweep.
+  DB row. This REPORTS them (an operator or a future sweep task removes them);
+  it does not delete anything itself.
 
 Read-only and cheap: this reports, it does not mutate. The dispatcher
 (`dispatcher.reclaim_expired_leases`) performs the actual recovery.

@@ -16,10 +16,10 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from app.db.enums import JobState
-from app.db.models import JobIntent, utcnow
+from app.db.enums import JobState, ModelStatus
+from app.db.models import JobIntent, ModelVersion, utcnow
 from app.db.repositories import get_engine
-from app.services import jobs
+from app.services import audit, jobs
 
 
 def _supports_row_locks(session: Session) -> bool:
@@ -46,11 +46,30 @@ def reclaim_expired_leases() -> int:
             JobIntent.leased_until < now,  # type: ignore[operator]
         )
         for intent in session.exec(stmt).all():
+            was_claimed = intent.state is JobState.claimed
             intent.state = JobState.pending
             intent.leased_until = None
             intent.last_error = "lease expired; reclaimed for re-dispatch"
             session.add(intent)
             reclaimed += 1
+            if was_claimed:
+                # a `claimed` intent's worker had set its ModelVersion to
+                # `evaluating` and then died (the lease is what expired). Release
+                # that stale mutex so the re-dispatch can re-run it — otherwise
+                # the re-run hits an illegal evaluating→evaluating transition and
+                # the intent poison-loops forever (never recovering the version).
+                # The long lease (LEASE_SECONDS) guarantees this only fires for a
+                # genuinely dead worker, never a slow-but-alive one.
+                version = session.get(ModelVersion, intent.model_version_id)
+                if version is not None and version.status is ModelStatus.evaluating:
+                    version.status = ModelStatus.pending
+                    session.add(version)
+                    audit.record(
+                        session,
+                        actor="dispatcher",
+                        action="stale-evaluating-reset:lease-expired",
+                        target_ref=f"model_version:{version.id}",
+                    )
         session.commit()
     return reclaimed
 

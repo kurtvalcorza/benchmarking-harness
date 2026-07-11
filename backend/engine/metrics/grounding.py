@@ -125,9 +125,11 @@ def _energy_inside_region(
     maps = [a for a in attributions if a.get("energy_inside") is not None]
     if not maps:
         return None, 0
+    # each energy fraction must be finite in [0,1] (contract §Shared rules); an
+    # out-of-range value is invalid input and cannot contribute a valid average
     fractions = [float(a["energy_inside"]) for a in maps]
-    if not fractions:
-        return None, 0
+    if not all(isfinite(f) and 0.0 <= f <= 1.0 for f in fractions):
+        return float("nan"), len(fractions)  # → caught by the [0,1] guard → invalid_evidence
     return sum(fractions) / len(fractions), len(fractions)
 
 
@@ -163,19 +165,18 @@ def evaluate_grounding(
         if score is None or n == 0:
             continue  # method not applicable to this evidence → try the next
         if n < min_samples:
-            # contract: an unavailable verdict has null method/score/evidence refs
+            # contract §Unavailable: null method/score AND evidence/target refs;
+            # sample_count is the only diagnostic retained
             return GroundingEvidence(
                 status="unavailable",
                 unavailable_reason="insufficient_samples",
                 sample_count=n,
-                target_ref=target_ref,
             )
         if not (isfinite(score) and 0.0 <= score <= 1.0):
             return GroundingEvidence(
                 status="unavailable",
                 unavailable_reason="invalid_evidence",
                 sample_count=n,
-                target_ref=target_ref,
             )
         return GroundingEvidence(
             status="measured",

@@ -97,17 +97,30 @@ def enqueue_evaluation(version_id: str) -> None:
     duplicate. Falls back to a fresh operator intent only when none is pending
     (a bare operator retry). Single positional arg so the recovery reconciler
     and tests can drive it uniformly."""
+    _NON_TERMINAL = (
+        JobState.pending,
+        JobState.dispatching,
+        JobState.dispatched,
+        JobState.claimed,
+    )
     with Session(get_engine()) as session:
-        pending = session.exec(
+        in_flight = session.exec(
             select(JobIntent)
             .where(
                 JobIntent.model_version_id == version_id,
-                JobIntent.state == JobState.pending,
+                JobIntent.state.in_(_NON_TERMINAL),  # type: ignore[attr-defined]
             )
             .order_by(JobIntent.created_at)
         ).all()
-        intent = pending[-1] if pending else None
-        if intent is None:
+        pending = [i for i in in_flight if i.state is JobState.pending]
+        if pending:
+            intent_id = pending[-1].id
+        elif in_flight:
+            # an intent for this version is already dispatched/claimed elsewhere
+            # (e.g. a concurrent dispatcher leased the pending one) — it will run;
+            # minting another would cause a redundant duplicate evaluation
+            return
+        else:
             intent = jobs.create_intent(
                 session,
                 model_version_id=version_id,
@@ -115,7 +128,7 @@ def enqueue_evaluation(version_id: str) -> None:
                 occasion=uuid.uuid4().hex,
             )
             session.commit()
-        intent_id = intent.id
+            intent_id = intent.id
     dispatch_intent(intent_id, version_id)
 
 
@@ -480,18 +493,14 @@ def _persist_tier_results(
         grounding_samples = evidence.pop("grounding_samples", None)
         grounding = metrics.get("grounding")
         if grounding_samples and isinstance(grounding, dict) and grounding.get("status") == "measured":
-            _g_ref, g_digest = stage.stage(
-                i, f"{o.tier.value}-grounding", {"method": grounding.get("method"), "samples": grounding_samples}
+            # Write the attribution artifact at a CONTENT-ADDRESSED path so the
+            # evidence_ref is BOTH resolvable (a real file an auditor can open)
+            # AND reproducible (digest-keyed, no run_id → identical across reruns,
+            # preserving SC-004). Idempotent: identical evidence → same path/bytes.
+            g_ref, g_digest = _write_grounding_artifact(
+                stage.results_root, grounding.get("method"), grounding_samples
             )
-            # CONTENT-addressed reference: identical model+data → identical
-            # grounding evidence, so the ref must be reproducible (a per-run file
-            # path would break SC-004). The artifact at `_g_ref` hashes to
-            # g_digest, so `sha256:<digest>` resolves to it in a content store.
-            grounding = {
-                **grounding,
-                "evidence_ref": f"sha256:{g_digest}",
-                "evidence_digest": g_digest,
-            }
+            grounding = {**grounding, "evidence_ref": g_ref, "evidence_digest": g_digest}
             metrics["grounding"] = grounding
         payload = {
             "tier": o.tier.value,
@@ -520,6 +529,22 @@ def _persist_tier_results(
                 dataset_checksum=dataset_checksum,
             )
         )
+
+
+def _write_grounding_artifact(results_root: Path, method, samples: list) -> tuple[str, str]:
+    """Persist the grounding attribution at a content-addressed path and return
+    (resolvable_path, sha256). Digest-keyed so the reference is reproducible
+    across reruns (SC-004) while remaining a real file an auditor can open."""
+    import hashlib
+
+    body = json.dumps({"method": method, "samples": samples}, indent=2, default=str).encode("utf-8")
+    digest = hashlib.sha256(body).hexdigest()
+    ev_dir = Path(results_root) / "evidence"
+    ev_dir.mkdir(parents=True, exist_ok=True)
+    artifact = ev_dir / f"{digest}.json"
+    if not artifact.exists():  # content-addressed → identical evidence, one file
+        artifact.write_bytes(body)
+    return str(artifact), digest
 
 
 def _upsert_card(
