@@ -46,3 +46,15 @@ transforms** (self-contained PIL/NumPy implementations in
 (Apache-2.0) / `albumentations` (MIT) with the `ml` extra) to owned or
 permissive data at evaluation time. No perturbed derivative of restricted data
 is ever created or stored in the repo.
+
+## Tier 3 grounding targets (Feature 002 / US5)
+
+Visual grounding is **measured** against the labeled localization targets in the
+class benchmark dataset (the boxes the pointing-game evaluator scores attribution
+points against) — never derived from prediction confidence. A dataset therefore
+needs per-image labeled boxes for grounding to be *measurable*; a model class
+with no localizable target (e.g. whole-image classification) records grounding as
+`unavailable` and is routed to human adjudication rather than auto-passing. A set
+with fewer labeled targets than `HARNESS_GROUNDING_MIN_SAMPLES` (default 20) also
+yields `unavailable` (fail-closed). See `contracts/metric-evidence.md`
+§GroundingEvidence.
