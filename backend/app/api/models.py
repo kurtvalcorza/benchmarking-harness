@@ -22,10 +22,10 @@ from app.api.schemas import (
     ModelDetailOut,
     ModelVersionOut,
 )
-from app.db.enums import ModelClass, Role
+from app.db.enums import JobReason, ModelClass, Role
 from app.db.models import ArtifactReceipt, EvaluationRun, Model, ModelCard, ModelVersion
 from app.db.repositories import get_session
-from app.services import audit
+from app.services import audit, jobs, orchestrator
 from app.services.artifact_ingest import (
     EmptyArtifact,
     StorageFull,
@@ -36,7 +36,6 @@ from app.services.artifact_ingest import (
 )
 from app.services.auth import Principal
 from app.services.config import load_config
-from app.services.orchestrator import enqueue_evaluation
 from engine.adapters.base import SUPPORTED_FRAMEWORKS
 from engine.datasets import REPO_ROOT
 from engine.metrics import SCORED_CLASSES
@@ -165,6 +164,14 @@ async def submit_model(
         outcome="success",
         metadata={"sha256": staged.sha256, "byte_count": staged.byte_count},
     )
+    # US4 transactional outbox: create the durable evaluation intent IN THE SAME
+    # transaction as the version + immutable receipt. A committed submission can
+    # never lack its evaluation intent, so a queue outage no longer strands work
+    # or 503s — the intent is durable and the dispatcher reclaims a lost publish.
+    intent = jobs.create_intent(
+        session, model_version_id=mv.id, reason=JobReason.submission
+    )
+    intent_id = intent.id
     try:
         session.commit()
     except IntegrityError:
@@ -180,20 +187,13 @@ async def submit_model(
         ) from None
     session.refresh(mv)
 
+    # FR-003: auto-trigger, no manual step. Best-effort publish — a broker outage
+    # here leaves the durable pending intent for the dispatcher to reclaim, so the
+    # submission still succeeds (201) rather than 503-ing on a recoverable gap.
     try:
-        enqueue_evaluation(mv.id)  # FR-003: auto-trigger, no manual step
-    except Exception as e:
-        # the submission — version + IMMUTABLE ArtifactReceipt + finalized
-        # artifact — is already durably committed. A queue outage must not orphan
-        # the append-only receipt by deleting the version/file, so we keep the
-        # record consistent and leave the version `pending`; the durable
-        # JobIntent dispatcher (US4) reclaims it. Until then it can be re-enqueued
-        # operationally. Never a silent success.
-        raise HTTPException(
-            503,
-            f"artifact stored (version {mv.id} is pending) but the evaluation queue is "
-            f"unavailable — it will be evaluated once the queue recovers ({e})",
-        ) from e
+        orchestrator.dispatch_intent(intent_id, mv.id)
+    except Exception:  # noqa: BLE001 — durable intent guarantees eventual dispatch
+        pass
     session.refresh(mv)
     return _version_out(session, mv)
 

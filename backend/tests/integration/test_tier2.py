@@ -19,7 +19,7 @@ def test_each_condition_scored_separately(client):
     conditions = [t["condition"] for t in t2]
     assert conditions[0] == "clean"
     assert set(conditions) == {"clean", "rain", "low_light", "fog"}  # one row per condition
-    scores = {t["condition"]: t["metrics"]["map_50_95"] for t in t2}
+    scores = {t["condition"]: t["metrics"]["coco_ap_50_95"] for t in t2}
     assert all(v is not None for v in scores.values())
     # perturbations really degrade a brightness-sensitive model
     assert min(scores["rain"], scores["low_light"], scores["fog"]) < scores["clean"]
@@ -29,7 +29,7 @@ def test_worst_case_drop_reported(client):
     t2 = _tier2(client)
     clean = next(t for t in t2 if t["condition"] == "clean")
     wcd = clean["metrics"]["worst_case_drop"]
-    assert wcd["metric"] == "map_50_95"
+    assert wcd["metric"] == "coco_ap_50_95"
     assert wcd["worst_condition"] in ("rain", "low_light", "fog")
     assert wcd["drop"] >= 0
     assert wcd["clean"] - wcd["worst_score"] == pytest.approx(wcd["drop"], abs=1e-6)

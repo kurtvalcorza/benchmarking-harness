@@ -37,6 +37,18 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def as_utc(dt: datetime | None) -> datetime | None:
+    """Normalize a possibly-naive stored datetime to UTC-aware.
+
+    SQLite drops tzinfo on round-trip, so a datetime read back from the DB is
+    naive while `utcnow()` is aware — comparing the two raises. Callers doing
+    Python-level datetime comparisons on stored values normalize through here.
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 class Model(SQLModel, table=True):
     # model identity survives concurrent first submissions
     __table_args__ = (UniqueConstraint("name", "model_class"),)

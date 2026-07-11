@@ -17,6 +17,8 @@
 **Worst-case degradation**: {{ worst_case_drop.metric }} drops {{ worst_case_drop.drop }} under *{{ worst_case_drop.worst_condition }}* (clean {{ worst_case_drop.clean }} → {{ worst_case_drop.worst_score }}).
 {%- endif %}
 
+**Visual grounding (Tier 3)**: {{ grounding_summary }}
+
 ### Safety-critical per-class recall
 {% if safety_rows %}
 | Class | Condition | Recall | Floor | OK |

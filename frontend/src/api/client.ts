@@ -67,11 +67,24 @@ export interface SafetyRow {
   ok: boolean
 }
 
+export interface GroundingEvidence {
+  status: 'measured' | 'unavailable'
+  method: string | null
+  evaluator_version: string | null
+  score: number | null
+  sample_count: number
+  target_ref: string | null
+  evidence_ref: string | null
+  evidence_digest: string | null
+  unavailable_reason: string | null
+}
+
 export interface TierResult {
   tier: 'capability' | 'domain_stress' | 'operational_safety'
   condition: Condition | null
   metrics: Record<string, unknown> & {
     safety_critical?: Record<string, SafetyRow>
+    grounding?: GroundingEvidence
     worst_case_drop?: {
       metric: string
       clean: number
@@ -84,6 +97,29 @@ export interface TierResult {
   passed: boolean | null
   evidence_ref: string
   dataset_checksum: string
+  // US2 evaluation integrity (metric-evidence.md): prediction coverage +
+  // reference-evaluator identity travel with every scored tier result.
+  coverage?: PredictionCoverage | null
+  evaluator?: EvaluatorProvenance | null
+}
+
+export interface PredictionCoverage {
+  expected_count: number
+  received_count: number
+  scored_count: number
+  missing_count: number
+  duplicate_count: number
+  unexpected_count: number
+  valid: boolean
+  issues?: { code: string; sample?: string[] }[]
+}
+
+export interface EvaluatorProvenance {
+  name: string
+  version?: string
+  metric_contract?: string
+  configuration?: Record<string, unknown>
+  dataset_checksum?: string
 }
 
 export interface RunDetail extends EvaluationRun {

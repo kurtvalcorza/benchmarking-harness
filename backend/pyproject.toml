@@ -28,6 +28,10 @@ dependencies = [
     "httpx>=0.27",  # OIDC discovery + JWKS fetch (also used by tests)
     "alembic>=1.13",  # schema migrations replace create_all in production
     "psycopg[binary]>=3.1",  # PostgreSQL driver for the production outbox/store
+    # COCO reference detection evaluator (US2/T034). Dependency-light C/NumPy —
+    # NOT the heavy `ml` runtime — so the pinned reference metric is available
+    # in CI and tests, never a home-grown approximation wearing the COCO name.
+    "pycocotools>=2.0.7",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +43,8 @@ ml = [
     "ultralytics>=8.1",
     "timm>=0.9",
     "torchmetrics>=1.3",
-    "pycocotools>=2.0.7",
+    # pycocotools is a CORE dependency (see [project.dependencies]) — the COCO
+    # reference detection evaluator must be present without the heavy ml extra.
     "imagecorruptions>=1.1",
     "albumentations>=1.4",
     "grad-cam>=1.5",

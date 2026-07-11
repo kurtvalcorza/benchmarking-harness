@@ -98,9 +98,60 @@ def _docker_available() -> bool:
 _SUBPROCESS_SAFE_FRAMEWORKS = {"stub"}
 
 
+def _allowed_roots() -> tuple[list[Path], list[Path]]:
+    """(input_roots, output_roots) the sandbox may read/write. Attacker-
+    influenceable artifact/dataset paths must resolve beneath an input root;
+    the output dir beneath an output root. Enforced here as defence in depth
+    on top of Golden Set registration containment (T020a)."""
+    from app.services.config import load_config
+
+    cfg = load_config()
+    work = os.environ.get("HARNESS_SANDBOX_WORKDIR")
+    temp_roots = [Path(tempfile.gettempdir())]
+    if work:
+        temp_roots.append(Path(work))
+    input_roots = [
+        cfg.artifacts_root,
+        *cfg.data_roots,
+        cfg.results_root,
+        cfg.runner_work_root,
+        *temp_roots,  # Tier 2 writes perturbed dataset copies here
+    ]
+    output_roots = [cfg.results_root, cfg.runner_work_root, *temp_roots]
+    return input_roots, output_roots
+
+
+def _assert_paths_allowed(artifact: str, dataset_root: str, out_dir: Path) -> None:
+    from app.services.config import resolves_beneath
+
+    input_roots, output_roots = _allowed_roots()
+    for label, raw in (("artifact", artifact), ("dataset", dataset_root)):
+        if not resolves_beneath(Path(raw), tuple(input_roots)):
+            raise SandboxError(
+                f"sandbox refuses {label} path outside the allowlisted roots "
+                f"(path containment, T072): {raw}"
+            )
+    if not resolves_beneath(out_dir, tuple(output_roots)):
+        raise SandboxError(
+            f"sandbox refuses output path outside the allowlisted roots (T072): {out_dir}"
+        )
+
+
 def run_inference(
     *, framework: str, artifact: str, model_class: str, dataset_root: str
 ) -> JobResult:
+    # T073: when a dedicated runner service is configured, the API/worker holds
+    # NO container socket — delegate execution over HTTP. The runner service runs
+    # with HARNESS_RUNNER_URL unset, so it executes locally (no recursion).
+    if os.environ.get("HARNESS_RUNNER_URL"):
+        from app.services.runner_client import run_remote
+
+        return run_remote(
+            framework=framework,
+            artifact=artifact,
+            model_class=model_class,
+            dataset_root=dataset_root,
+        )
     mode = sandbox_mode()
     if (
         mode == "subprocess"
@@ -121,6 +172,9 @@ def run_inference(
         Path(workdir).mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="harness-sandbox-", dir=workdir or None) as tmp:
         out_dir = Path(tmp)
+        # T072: refuse to mount artifact/dataset/output paths that escape the
+        # configured roots (a malicious data_ref/artifact cannot reach host files)
+        _assert_paths_allowed(artifact, dataset_root, out_dir)
         if mode == "docker":
             raw = _run_docker(framework, artifact, model_class, dataset_root, out_dir)
         else:

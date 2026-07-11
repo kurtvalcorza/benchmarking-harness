@@ -91,16 +91,40 @@ class StubAdapter:
 
     def _predict_det(self, model: StubModel, img: Image, gt: list[dict], quality: float) -> Prediction:
         emit = model.spec.get("emit_labels", {})  # emulate a foreign vocabulary (F6)
-        boxes, scores, labels = [], [], []
+        # US5/T065: `grounding` is the model's grounding QUALITY in [0,1] — the
+        # probability its attribution point lands inside the object it detects.
+        # Reproducible evidence, never a bare confidence scalar.
+        grounding_quality = float(model.spec.get("grounding", 0.5))
+        # a model that provides NO attribution (only detections + confidence)
+        # cannot have its grounding measured — Tier 3 will declare it unavailable
+        emit_attribution = bool(model.spec.get("emit_attribution", True))
+        boxes, scores, labels, attribution = [], [], [], []
         for i, obj in enumerate(gt):
             label = obj["label"]
             p_hit = self._skill_for(model, label) * quality
             roll = _unit_hash(model.weights_digest, img.id, str(i), label)
             if roll < p_hit:
-                boxes.append(list(obj["bbox"]))
+                box = list(obj["bbox"])
+                boxes.append(box)
                 scores.append(round(0.5 + 0.5 * p_hit * (1 - roll / 2), 4))
                 labels.append(emit.get(label, label))
-        return Prediction(image_id=img.id, boxes=boxes, scores=scores, labels=labels)
+                if not emit_attribution:
+                    continue
+                # deterministic attribution point: inside the box with probability
+                # `grounding_quality`, otherwise outside it (poorly grounded)
+                groll = _unit_hash(model.weights_digest, img.id, str(i), "grounding")
+                cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+                point = (
+                    [round(cx, 2), round(cy, 2)]
+                    if groll < grounding_quality
+                    else [round(box[0] - 5.0, 2), round(box[1] - 5.0, 2)]
+                )
+                # attribution is keyed on the GROUND-TRUTH label (the class the
+                # model localizes), independent of any emitted foreign vocabulary
+                attribution.append({"label": label, "point": point})
+        return Prediction(
+            image_id=img.id, boxes=boxes, scores=scores, labels=labels, attribution=attribution
+        )
 
     def _predict_cls(self, model: StubModel, img: Image, gt: list[dict], quality: float) -> Prediction:
         true_label = gt[0]["label"] if gt else "unknown"

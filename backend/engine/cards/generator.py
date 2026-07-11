@@ -53,6 +53,7 @@ class CardInputs:
     adjudications: list[dict] = field(default_factory=list)  # reviewer/decision/rationale/at
     limitations: list[str] = field(default_factory=list)
     flag_trigger: str | None = None  # why the run awaits adjudication, if it does
+    grounding: dict | None = None  # Tier 3 GroundingEvidence (US5/T066)
 
 
 def split_human_sections(existing_card: str) -> str:
@@ -65,6 +66,13 @@ def _tbc(value) -> str:
     if value is None or value == "" or value == []:
         return TBC
     return str(value)
+
+
+def _short(value) -> str:
+    if value is None or value == "":
+        return TBC
+    s = str(value)
+    return s[:16] + "…" if len(s) > 16 else s
 
 
 def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str, list[str]]:
@@ -144,8 +152,23 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
     else:
         adjudication_block = "No adjudication required for this run."
 
+    # US5/T066: visual grounding is recorded explicitly — measured (with method,
+    # score, sample count, and the target set it was measured against) or an
+    # honest "unavailable" with its reason. Never a silent confidence proxy.
+    g = inputs.grounding or {}
+    if g.get("status") == "measured":
+        grounding_summary = (
+            f"measured · {g.get('method')} · score {_tbc(g.get('score'))} over "
+            f"{g.get('sample_count')} samples · target `{_short(g.get('target_ref'))}`"
+        )
+    elif g.get("status") == "unavailable":
+        grounding_summary = f"unavailable — {g.get('unavailable_reason')} (Tier 3 cannot auto-pass)"
+    else:
+        grounding_summary = TBC
+
     gs = inputs.golden_set or {}
     card = _env.get_template("model_card.md.j2").render(
+        grounding_summary=grounding_summary,
         human_sections=human.rstrip(),
         verdict=track("verdict", inputs.verdict),
         evaluated_at=track(
@@ -174,7 +197,7 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
 
 
 def _primary_metric(metrics: dict) -> str | None:
-    for key in ("map_50_95", "top1", "grounding_score", "miou", "f1"):
+    for key in ("coco_ap_50_95", "map_50_95", "top1", "grounding_score", "miou", "f1"):
         if key in metrics:
             return key
     return next(iter(metrics), None)

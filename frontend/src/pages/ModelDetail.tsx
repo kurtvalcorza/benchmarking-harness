@@ -83,6 +83,108 @@ function SafetyTable({ run }: { run: RunDetail }) {
   )
 }
 
+function CoverageTable({ run }: { run: RunDetail }) {
+  // US2/T037: prove every expected item was accounted for (omission cannot
+  // inflate a verdict) and record which reference evaluator produced the number.
+  const rows = run.tier_results.filter((t) => t.coverage || t.evaluator)
+  if (!rows.length) return null
+  return (
+    <>
+      <h3>Evaluation integrity</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Tier</th>
+            <th>Condition</th>
+            <th>Evaluator</th>
+            <th>Expected</th>
+            <th>Scored</th>
+            <th>Missing</th>
+            <th>Duplicate</th>
+            <th>Unexpected</th>
+            <th>Coverage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t, i) => {
+            const c = t.coverage
+            const discrepancy =
+              !!c && (c.missing_count > 0 || c.duplicate_count > 0 || c.unexpected_count > 0)
+            return (
+              <tr key={i}>
+                <td>{t.tier}</td>
+                <td>{t.condition ?? '—'}</td>
+                <td className="muted">
+                  {t.evaluator ? (
+                    <span title={t.evaluator.metric_contract ?? undefined}>
+                      {t.evaluator.name}
+                      {t.evaluator.version ? ` @ ${t.evaluator.version}` : ''}
+                    </span>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td>{c ? c.expected_count : '—'}</td>
+                <td>{c ? c.scored_count : '—'}</td>
+                <td className={c && c.missing_count > 0 ? 'breach' : undefined}>
+                  {c ? c.missing_count : '—'}
+                </td>
+                <td className={c && c.duplicate_count > 0 ? 'breach' : undefined}>
+                  {c ? c.duplicate_count : '—'}
+                </td>
+                <td className={c && c.unexpected_count > 0 ? 'breach' : undefined}>
+                  {c ? c.unexpected_count : '—'}
+                </td>
+                <td>
+                  {!c ? (
+                    '—'
+                  ) : !c.valid ? (
+                    <span className="breach">INVALID</span>
+                  ) : discrepancy ? (
+                    <span className="breach">incomplete</span>
+                  ) : (
+                    '✓ complete'
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </>
+  )
+}
+
+function Grounding({ run }: { run: RunDetail }) {
+  // US5/T067: show visual grounding as MEASURED (method, score, samples, target)
+  // or explicitly UNAVAILABLE — never an implied pass on a confidence proxy.
+  const t3 = run.tier_results.find((t) => t.tier === 'operational_safety')
+  const g = t3?.metrics.grounding
+  if (!g) return null
+  return (
+    <>
+      <h3>Visual grounding (Tier 3)</h3>
+      {g.status === 'measured' ? (
+        <p>
+          <span className="pill pass">measured</span> {g.method} · score{' '}
+          <strong>{g.score}</strong> over {g.sample_count} samples
+          {g.target_ref ? (
+            <span className="muted"> · target {g.target_ref.slice(0, 12)}…</span>
+          ) : null}
+          {g.evidence_digest ? (
+            <span className="muted"> · evidence {g.evidence_digest.slice(0, 12)}…</span>
+          ) : null}
+        </p>
+      ) : (
+        <p>
+          <span className="breach">unavailable</span> — {g.unavailable_reason}. Grounding could
+          not be measured, so Tier 3 cannot auto-pass; this run requires human adjudication.
+        </p>
+      )}
+    </>
+  )
+}
+
 function Degradation({ run }: { run: RunDetail }) {
   const clean = run.tier_results.find(
     (t) => t.tier === 'domain_stress' && t.condition === 'clean',
@@ -175,6 +277,8 @@ export function ModelDetail() {
             <p className="error">Infrastructure failure — not a model failure; resubmit or retry.</p>
           )}
           <TierTable run={run} />
+          <CoverageTable run={run} />
+          <Grounding run={run} />
           <Degradation run={run} />
           <SafetyTable run={run} />
         </>

@@ -40,6 +40,12 @@ class Prediction:
     labels: list[str] = field(default_factory=list)
     label: str | None = None
     class_scores: dict[str, float] = field(default_factory=dict)
+    # US5/T062: reproducible per-detection grounding attribution — one entry per
+    # emitted localization claim: {"label", "point": [x, y]} (pointing game) or
+    # {"label", "energy_inside": float} (attribution-map energy). This is the
+    # ONLY channel the Tier 3 grounding evaluator reads; a bare confidence scalar
+    # here is ignored (metric-evidence.md §Forbidden substitutions).
+    attribution: list[dict[str, Any]] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -50,6 +56,7 @@ class Prediction:
             "labels": self.labels,
             "label": self.label,
             "class_scores": self.class_scores,
+            "attribution": self.attribution,
             "extra": self.extra,
         }
 
@@ -62,6 +69,7 @@ class Prediction:
             labels=d.get("labels") or [],
             label=d.get("label"),
             class_scores=d.get("class_scores") or {},
+            attribution=d.get("attribution") or [],
             extra=d.get("extra") or {},
         )
 
