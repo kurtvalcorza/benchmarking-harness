@@ -56,6 +56,25 @@ and register it via
 (dataset paths are the API/worker's view — `./data` is mounted at `/srv/data`, the baked-in samples at `/srv/samples`).
 Evaluating real `.pt`/`.onnx` weights needs the ML extra: `pip install -e "backend[ml]"`.
 
+### Production runner boundary (US6)
+
+The container runtime socket is a host-escape surface. In production the API and
+general worker MUST hold **no** `/var/run/docker.sock` of their own — run the
+dedicated **runner** service (compose `production` profile) as the sole socket
+owner and point the workers at it:
+
+```bash
+HARNESS_RUNNER_TOKEN=<secret> docker compose --profile production up -d runner
+# then run api/worker with HARNESS_RUNNER_URL=http://runner:9000 (+ token) and
+# WITHOUT their own docker.sock mount
+```
+
+When `HARNESS_RUNNER_URL` is set the workers delegate model execution over HTTP
+(bearer-authenticated) to the runner, which re-validates every artifact/dataset/
+output path against its allowlist and runs the same no-egress sandbox. The
+default dev compose keeps the in-process path (worker owns the socket) for a
+zero-dependency demo.
+
 ## Tests & constitution gates
 
 ```bash

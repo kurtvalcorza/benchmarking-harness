@@ -62,13 +62,50 @@ services:
       HARNESS_SANDBOX_IMAGE: benchmarking-harness-sandbox:latest
       HARNESS_SANDBOX_WORKDIR: /srv/state/sandbox
       HARNESS_HOSTPATH_MAP: "/srv/backend=${PWD}/backend;/srv/state=${PWD}/.state;/srv/data=${PWD}/data;/srv/samples=${PWD}/samples"
+      # US6/T074: in PRODUCTION set HARNESS_RUNNER_URL=http://runner:9000 (+ token)
+      # and REMOVE the docker.sock mount below so the worker holds NO host socket;
+      # execution then delegates to the `runner` service. The socket mount here is
+      # a DEV-ONLY convenience for the zero-dependency in-process path.
+      HARNESS_RUNNER_URL: ${HARNESS_RUNNER_URL:-}
+      HARNESS_RUNNER_TOKEN: ${HARNESS_RUNNER_TOKEN:-}
     volumes:
       - ./.state:/srv/state
       - ./data:/srv/data
-      - /var/run/docker.sock:/var/run/docker.sock  # sandbox containers (no-egress)
+      - /var/run/docker.sock:/var/run/docker.sock  # DEV-ONLY (see runner service; drop in prod)
     depends_on:
       redis:
         condition: service_started
+      sandbox-image:
+        condition: service_completed_successfully
+
+  # Dedicated runner service (US6/T073/T074): the ONLY component that should hold
+  # the container runtime socket. Enabled under the `production` profile:
+  #   HARNESS_RUNNER_TOKEN=<secret> docker compose --profile production up -d runner
+  # then run api/worker with HARNESS_RUNNER_URL=http://runner:9000 and NO socket
+  # mount of their own, so a compromised API/UI tier cannot reach the host daemon.
+  runner:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["uvicorn", "runner.main:app", "--host", "0.0.0.0", "--port", "9000"]
+    profiles: ["production"]
+    environment:
+      <<: *harness-env
+      HARNESS_SANDBOX_MODE: docker
+      HARNESS_SANDBOX_IMAGE: benchmarking-harness-sandbox:latest
+      HARNESS_SANDBOX_WORKDIR: /srv/state/sandbox
+      HARNESS_HOSTPATH_MAP: "/srv/backend=${PWD}/backend;/srv/state=${PWD}/.state;/srv/data=${PWD}/data;/srv/samples=${PWD}/samples"
+      # shared secret the worker presents; fail closed if unset (runner refuses /run)
+      HARNESS_RUNNER_TOKEN: ${HARNESS_RUNNER_TOKEN:?set HARNESS_RUNNER_TOKEN for the runner boundary}
+      # deliberately NOT set: HARNESS_RUNNER_URL — the runner executes locally
+      # (it owns the socket) and must never delegate back to itself.
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./.state:/srv/state
+      - ./data:/srv/data
+      - /var/run/docker.sock:/var/run/docker.sock  # the runner is the socket owner
+    depends_on:
       sandbox-image:
         condition: service_completed_successfully
 
