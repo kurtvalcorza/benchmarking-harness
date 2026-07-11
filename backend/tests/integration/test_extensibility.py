@@ -12,6 +12,28 @@ from tests.conftest import (
 )
 
 
+def _detection_golden(name: str, version: str):
+    """An unsaved detection GoldenTestSet, built directly (bypassing the
+    /golden-sets endpoint and reevaluate_for_golden_set) so the mid-run tests
+    can land a set without triggering registration recovery."""
+    from app.db.enums import ModelClass
+    from app.db.models import GoldenTestSet
+    from engine.datasets import Dataset
+    from tests.conftest import DET_GOLDEN
+
+    return GoldenTestSet(
+        name=name,
+        model_class=ModelClass.detection,
+        version=version,
+        checksum=Dataset(root=DET_GOLDEN).checksum(),
+        conditions=["rain", "low_light", "fog"],
+        safety_critical_classes=["pedestrian"],
+        recall_floors={"pedestrian": 0.6},
+        license="owned",
+        data_ref=str(DET_GOLDEN),
+    )
+
+
 def test_classifier_evaluates_via_registry(client):
     register_golden(client, cls_manifest())
     mv = submit_model(
@@ -234,12 +256,10 @@ def test_first_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
     own audit action (not the pre-existing stuck-run rescue path)."""
     from sqlmodel import Session, select
 
-    from app.db.enums import ModelClass
-    from app.db.models import AuditEvent, GoldenTestSet
+    from app.db.models import AuditEvent
     from app.db.repositories import get_engine
     from app.services import orchestrator
-    from engine.datasets import Dataset
-    from tests.conftest import DET_GOLDEN, HEALTHY_DET
+    from tests.conftest import HEALTHY_DET
 
     real_tier1 = orchestrator.run_tier1
     state = {"injected": False}
@@ -251,19 +271,7 @@ def test_first_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
         if not state["injected"]:
             state["injected"] = True
             with Session(get_engine()) as s:
-                s.add(
-                    GoldenTestSet(
-                        name="mid-run-set",
-                        model_class=ModelClass.detection,
-                        version="v1",
-                        checksum=Dataset(root=DET_GOLDEN).checksum(),
-                        conditions=["rain", "low_light", "fog"],
-                        safety_critical_classes=["pedestrian"],
-                        recall_floors={"pedestrian": 0.6},
-                        license="owned",
-                        data_ref=str(DET_GOLDEN),
-                    )
-                )
+                s.add(_detection_golden(name="mid-run-set", version="v1"))
                 s.commit()
         return result
 
@@ -296,12 +304,10 @@ def test_newer_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
     reevaluate_for_golden_set because the v1 run hasn't persisted yet."""
     from sqlmodel import Session, select
 
-    from app.db.enums import ModelClass
-    from app.db.models import AuditEvent, GoldenTestSet
+    from app.db.models import AuditEvent
     from app.db.repositories import get_engine
     from app.services import orchestrator
-    from engine.datasets import Dataset
-    from tests.conftest import DET_GOLDEN, HEALTHY_DET
+    from tests.conftest import HEALTHY_DET
 
     register_golden(client, det_manifest())  # v1 exists before submission
     real_tier1 = orchestrator.run_tier1
@@ -312,19 +318,7 @@ def test_newer_golden_set_landing_mid_run_triggers_recheck(client, monkeypatch):
         if not state["injected"]:
             state["injected"] = True
             with Session(get_engine()) as s:
-                s.add(
-                    GoldenTestSet(
-                        name="det-golden",
-                        model_class=ModelClass.detection,
-                        version="v2",
-                        checksum=Dataset(root=DET_GOLDEN).checksum(),
-                        conditions=["rain", "low_light", "fog"],
-                        safety_critical_classes=["pedestrian"],
-                        recall_floors={"pedestrian": 0.6},
-                        license="owned",
-                        data_ref=str(DET_GOLDEN),
-                    )
-                )
+                s.add(_detection_golden(name="det-golden", version="v2"))
                 s.commit()
         return result
 
@@ -354,12 +348,9 @@ def test_registration_after_run_commit_is_not_enqueued_twice(client, monkeypatch
     """
     from sqlmodel import Session
 
-    from app.db.enums import ModelClass
-    from app.db.models import GoldenTestSet
     from app.db.repositories import get_engine
     from app.services import orchestrator
-    from engine.datasets import Dataset
-    from tests.conftest import DET_GOLDEN, HEALTHY_DET
+    from tests.conftest import HEALTHY_DET
 
     real_latest = orchestrator._latest_golden_set
     state = {"calls": 0, "injected": False}
@@ -371,17 +362,7 @@ def test_registration_after_run_commit_is_not_enqueued_twice(client, monkeypatch
         if state["calls"] == 2 and not state["injected"]:
             state["injected"] = True
             with Session(get_engine(), expire_on_commit=False) as s:
-                gs = GoldenTestSet(
-                    name="commit-window-set",
-                    model_class=ModelClass.detection,
-                    version="v1",
-                    checksum=Dataset(root=DET_GOLDEN).checksum(),
-                    conditions=["rain", "low_light", "fog"],
-                    safety_critical_classes=["pedestrian"],
-                    recall_floors={"pedestrian": 0.6},
-                    license="owned",
-                    data_ref=str(DET_GOLDEN),
-                )
+                gs = _detection_golden(name="commit-window-set", version="v1")
                 s.add(gs)
                 s.commit()
             orchestrator.reevaluate_for_golden_set(gs)

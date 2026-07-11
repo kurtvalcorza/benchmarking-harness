@@ -102,7 +102,7 @@ def test_approve_requires_complete_tier_lineage(client, tmp_path):
     assert reject.status_code == 200
 
 
-def test_concurrent_decision_race_is_409_at_the_endpoint(client, monkeypatch):
+def test_concurrent_decision_race_is_409_at_the_endpoint(client):
     """Drive the IntegrityError→409 path through decide() itself: a decision
     already exists for the run (a racing reviewer beat us), so our commit hits
     the unique(run_id) constraint and the endpoint returns 409, not a 500."""
