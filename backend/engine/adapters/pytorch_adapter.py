@@ -25,6 +25,25 @@ class TorchModel:
     net: Any
     class_names: dict[int, str]
     framework_version: str
+    is_yolo: bool = False  # net is an Ultralytics YOLO (vs a raw timm/torchvision module)
+
+
+def _try_load_yolo(artifact_ref: str) -> Any | None:
+    """Load `artifact_ref` as an Ultralytics YOLO checkpoint, or return None if
+    it is not one (a fully-pickled timm/torchvision module or a bare state_dict).
+
+    Ultralytics' own loader owns the compatibility path for legacy/renamed
+    checkpoint modules (torch_safe_load aliases `ultralytics.yolo.*` etc.), so it
+    is the right FIRST attempt for any .pt that might be a YOLO checkpoint —
+    a raw torch.load peek would spuriously fail those. It also loads the weights
+    exactly once (no second full copy held alive alongside a peek), which matters
+    in the memory-constrained sandbox (Codex #11)."""
+    from ultralytics import YOLO
+
+    try:
+        return YOLO(artifact_ref)  # local file only; never a model name
+    except Exception:
+        return None
 
 
 class PyTorchAdapter:
@@ -40,10 +59,47 @@ class PyTorchAdapter:
 
                 net = YOLO(artifact_ref)  # local file only; never a model name
                 names = dict(net.names) if hasattr(net, "names") else {}
+                is_yolo = True
             elif model_class is ModelClass.classification:
-                net = torch.load(artifact_ref, map_location="cpu", weights_only=False)
-                net.eval()
-                names = getattr(net, "class_names", {})
+                # Two shapes score as classification here: an Ultralytics YOLO
+                # classification checkpoint (yolov8n-cls et al., loaded via YOLO
+                # like the detection path) or a fully-pickled timm/torchvision
+                # nn.Module. Try the Ultralytics loader FIRST — it owns the
+                # legacy-checkpoint compat path and loads once — and only fall
+                # back to torch.load for a non-Ultralytics artifact (Codex #11).
+                yolo = _try_load_yolo(artifact_ref)
+                if yolo is not None:
+                    if yolo.task != "classify":
+                        raise AdapterError(
+                            f"Ultralytics checkpoint has task '{yolo.task}', not a "
+                            "classifier; submit it under its actual model class"
+                        )
+                    net = yolo
+                    names = dict(yolo.names) if getattr(yolo, "names", None) else {}
+                    if not names:
+                        # without a class vocabulary, predictions fall back to
+                        # numeric labels that match neither the dataset nor the
+                        # label_map — fail loud rather than silently score ~0
+                        raise AdapterError(
+                            "Ultralytics classification checkpoint exposes no class "
+                            "names; cannot map predictions to a label space"
+                        )
+                    is_yolo = True
+                else:
+                    obj = torch.load(artifact_ref, map_location="cpu", weights_only=False)
+                    if isinstance(obj, torch.nn.Module):
+                        obj.eval()
+                        net = obj
+                        names = getattr(net, "class_names", {})
+                        is_yolo = False
+                    else:
+                        # a bare state_dict carries no architecture to reconstruct
+                        raise AdapterError(
+                            "classification weights must be a pickled nn.Module "
+                            "(timm/torchvision) or an Ultralytics YOLO classification "
+                            f"checkpoint; got a bare '{type(obj).__name__}' with no "
+                            "model architecture (e.g. a state_dict)"
+                        )
             else:
                 raise AdapterError(
                     f"pytorch adapter has no runner for model class '{model_class.value}' in the POC"
@@ -57,6 +113,7 @@ class PyTorchAdapter:
             net=net,
             class_names=names,
             framework_version=torch.__version__,
+            is_yolo=is_yolo,
         )
 
     def predict(self, model: TorchModel, images: Iterable[Image]) -> list[Prediction]:
@@ -80,6 +137,22 @@ class PyTorchAdapter:
         return Prediction(image_id=img.id, boxes=boxes, scores=scores, labels=labels)
 
     def _predict_cls(self, model: TorchModel, img: Image) -> Prediction:
+        if model.is_yolo:
+            # Ultralytics classification: predict() returns a Probs over the
+            # model's class vocabulary. Emit the top-1 label + the full score
+            # vector so canonicalize() (F6 label_map) and top-5 both work.
+            r = model.net.predict(img.path, verbose=False)[0]
+            probs = r.probs
+            if probs is None:
+                raise AdapterError("ultralytics model returned no classification probabilities")
+            names = model.class_names
+            data = probs.data.tolist()
+            return Prediction(
+                image_id=img.id,
+                label=names.get(int(probs.top1), str(int(probs.top1))),
+                class_scores={names.get(i, str(i)): float(p) for i, p in enumerate(data)},
+            )
+
         import torch
         from PIL import Image as PILImage
 
