@@ -28,13 +28,22 @@ class TorchModel:
     is_yolo: bool = False  # net is an Ultralytics YOLO (vs a raw timm/torchvision module)
 
 
-def _is_ultralytics_checkpoint(obj: Any) -> bool:
-    """An Ultralytics `.pt` deserializes to a dict checkpoint carrying the model
-    under `model` plus training metadata; a bare state_dict has only tensor-name
-    keys and none of that metadata, and a fully-pickled module is not a dict."""
-    return isinstance(obj, dict) and "model" in obj and any(
-        k in obj for k in ("train_args", "date", "version", "ema")
-    )
+def _try_load_yolo(artifact_ref: str) -> Any | None:
+    """Load `artifact_ref` as an Ultralytics YOLO checkpoint, or return None if
+    it is not one (a fully-pickled timm/torchvision module or a bare state_dict).
+
+    Ultralytics' own loader owns the compatibility path for legacy/renamed
+    checkpoint modules (torch_safe_load aliases `ultralytics.yolo.*` etc.), so it
+    is the right FIRST attempt for any .pt that might be a YOLO checkpoint —
+    a raw torch.load peek would spuriously fail those. It also loads the weights
+    exactly once (no second full copy held alive alongside a peek), which matters
+    in the memory-constrained sandbox (Codex #11)."""
+    from ultralytics import YOLO
+
+    try:
+        return YOLO(artifact_ref)  # local file only; never a model name
+    except Exception:
+        return None
 
 
 class PyTorchAdapter:
@@ -53,34 +62,36 @@ class PyTorchAdapter:
                 is_yolo = True
             elif model_class is ModelClass.classification:
                 # Two shapes score as classification here: an Ultralytics YOLO
-                # classification checkpoint (yolov8n-cls et al. — a dict, loaded
-                # via YOLO like the detection path) or a fully-pickled timm/
-                # torchvision nn.Module. A bare state_dict carries no architecture
-                # and cannot be reconstructed here — reject it clearly.
-                ckpt = torch.load(artifact_ref, map_location="cpu", weights_only=False)
-                if _is_ultralytics_checkpoint(ckpt):
-                    from ultralytics import YOLO
-
-                    net = YOLO(artifact_ref)
-                    if net.task != "classify":
+                # classification checkpoint (yolov8n-cls et al., loaded via YOLO
+                # like the detection path) or a fully-pickled timm/torchvision
+                # nn.Module. Try the Ultralytics loader FIRST — it owns the
+                # legacy-checkpoint compat path and loads once — and only fall
+                # back to torch.load for a non-Ultralytics artifact (Codex #11).
+                yolo = _try_load_yolo(artifact_ref)
+                if yolo is not None:
+                    if yolo.task != "classify":
                         raise AdapterError(
-                            f"Ultralytics checkpoint has task '{net.task}', not a "
+                            f"Ultralytics checkpoint has task '{yolo.task}', not a "
                             "classifier; submit it under its actual model class"
                         )
-                    names = dict(net.names) if getattr(net, "names", None) else {}
+                    net = yolo
+                    names = dict(yolo.names) if getattr(yolo, "names", None) else {}
                     is_yolo = True
-                elif isinstance(ckpt, torch.nn.Module):
-                    ckpt.eval()
-                    net = ckpt
-                    names = getattr(net, "class_names", {})
-                    is_yolo = False
                 else:
-                    raise AdapterError(
-                        "classification weights must be a pickled nn.Module "
-                        "(timm/torchvision) or an Ultralytics YOLO classification "
-                        f"checkpoint; got a bare '{type(ckpt).__name__}' with no "
-                        "model architecture (e.g. a state_dict)"
-                    )
+                    obj = torch.load(artifact_ref, map_location="cpu", weights_only=False)
+                    if isinstance(obj, torch.nn.Module):
+                        obj.eval()
+                        net = obj
+                        names = getattr(net, "class_names", {})
+                        is_yolo = False
+                    else:
+                        # a bare state_dict carries no architecture to reconstruct
+                        raise AdapterError(
+                            "classification weights must be a pickled nn.Module "
+                            "(timm/torchvision) or an Ultralytics YOLO classification "
+                            f"checkpoint; got a bare '{type(obj).__name__}' with no "
+                            "model architecture (e.g. a state_dict)"
+                        )
             else:
                 raise AdapterError(
                     f"pytorch adapter has no runner for model class '{model_class.value}' in the POC"
