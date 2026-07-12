@@ -54,9 +54,14 @@ One entry per emitted detection:
 ## Tier scoping (FR-306a — review finding #1)
 
 - The extractor MUST run **only in Tier 3**. `run_inference` is tier-agnostic, so an `explain:
-  bool = False` parameter MUST be threaded through it to the adapter predict path; Tier 1 and
+  bool = False` parameter MUST be threaded through **both** its legs: the `spec` dict into
+  `engine/sandbox/job.py::run(spec)` (where `adapter.predict()`/`explain()` run) **and** the
+  HTTP body of `app/services/runner_client.py::run_remote()` (the T073 remote path). Tier 1 and
   Tier 2 call with the default (`explain=False` → no attribution, no extractor cost), and only
   Tier 3 passes `explain=True`.
+- Attribution is produced by a separate `adapter.explain(model, images, preds)` step (an
+  optional `InferenceAdapter` method, default no-op), **not** inside `predict()` — so it can be
+  timed separately and skipped entirely when `explain=False`.
 - `HARNESS_GROUNDING_EXPLAINER` selects *which* extractor Tier 3 uses; it MUST NOT by itself
   cause attribution to run in any tier.
 
@@ -72,11 +77,14 @@ One entry per emitted detection:
 
 - The **clean** detection pass is the sole source of `latency_ms_per_image`,
   `throughput_images_per_s`, and `edge_deployable`.
-- Because attribution is produced inside the timed `predict()`, the `explain=True` path MUST
-  time the clean forward and the extractor **separately** and report both as distinct
-  `JobResult.timing` keys — `predict_s` (clean) and `explain_s` (extractor). `run_tier3` MUST
+- Attribution is produced by a separately-timed `adapter.explain()` step in
+  `engine/sandbox/job.py::run(spec)` (after the timed clean `predict()`), so `JobResult.timing`
+  carries `predict_s` (clean) and `explain_s` (extractor) as distinct keys. `run_tier3` MUST
   derive the resource profile from `predict_s` **only**; `explain_s` MUST NOT appear in it.
-- For `explain=False`, the clean-pass timing MUST be byte-for-byte unchanged from today.
+- The mechanism MUST NOT change `predict()`'s return type; it is a separate `explain()` call
+  (`InferenceAdapter` protocol addition, default no-op).
+- For `explain=False`, the clean-pass timing MUST be byte-for-byte unchanged from today on
+  every execution leg (`job.py` and `run_remote`).
 
 ## Budget (FR-309)
 

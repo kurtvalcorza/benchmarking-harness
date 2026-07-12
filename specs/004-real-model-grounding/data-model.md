@@ -94,11 +94,14 @@ Reused unchanged: `HARNESS_GROUNDING_METHODS` (`pointing_game`, `energy_inside_r
 
 ## `run_inference` / `JobResult.timing` — explain seam + timing split (not schema)
 
-`run_inference` gains one parameter and two timing keys (review findings #1/#2):
+The explain seam touches the full execution path, not just `run_inference` (review #1/#2 +
+2nd-round follow-up):
 
 | Element | Change |
 |---|---|
-| `run_inference(..., explain: bool = False)` | new param, forwarded to the adapter predict path; Tier 1/2 use the default (no attribution, no cost), **only** Tier 3 passes `explain=True` (FR-306a) |
+| `run_inference(..., explain: bool = False)` | new param (`runner.py`); forwarded to **both** legs — the `spec` dict → `job.py`, and `runner_client.run_remote()`'s HTTP body (T073). Tier 1/2 use the default, **only** Tier 3 passes `explain=True` (FR-306a) |
+| `InferenceAdapter.explain(model, images, preds)` | new optional protocol method (`base.py`), default no-op returning `preds`; the stub emits its synthetic attribution here, the pytorch adapter runs D-RISE/Grad-CAM here |
+| `engine/sandbox/job.py::run(spec)` | reads `spec["explain"]`; after the timed clean `predict()` runs a **separately-timed** `explain()`; builds `predict_s`/`explain_s` |
 | `JobResult.timing["predict_s"]` | the **clean** forward time (unchanged for `explain=False`) — the sole source of `latency_ms_per_image`/`throughput`/`edge_deployable` |
 | `JobResult.timing["explain_s"]` | the extractor time, present only when `explain=True`; **not** folded into the resource profile (FR-308) |
 

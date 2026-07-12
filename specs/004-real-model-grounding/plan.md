@@ -75,23 +75,36 @@ peak point and the energy-inside-box fraction. The PyTorch adapter's `_predict_d
 D-RISE only calls the existing `model.net.predict` on masked image copies (black-box);
 Grad-CAM binds a hook on the detection head's last conv.
 
-**Explain seam (R8, review finding #1):** the explain step must run **only in Tier 3**, never
-Tier 1/2, because `run_inference` is tier-agnostic (one call in all three tiers over one shared
-`predict()`) and attribution is consumed only by Tier 3. An `explain: bool = False` parameter
-is threaded through `run_inference` → the adapter predict path; Tier 1 (`:39`) and Tier 2
-(`:82`) use the default (no attribution, no cost), Tier 3 (`:62`) passes `explain=True`. The
-global `HARNESS_GROUNDING_EXPLAINER` selects *which* extractor Tier 3 uses; it does not by
-itself trigger attribution.
+**Explain seam (R8, review findings #1 + follow-up):** the explain step must run **only in
+Tier 3**, never Tier 1/2, because `run_inference` is tier-agnostic (one call in all three tiers
+over one shared `predict()`) and attribution is consumed only by Tier 3. An
+`explain: bool = False` parameter is threaded through `run_inference` → **the full execution
+path**, not just the tier call-sites. That path has three legs the seam MUST cover
+(second-round review): `run_inference` (`runner.py:140`) either (a) serializes a `spec` dict to
+**`engine/sandbox/job.py::run(spec)`** (subprocess/docker) — where `adapter.predict()` actually
+runs (`job.py:107`) and where `predict_s`/`latency_ms_per_image` are built (`job.py:118-123`) —
+or (b) delegates over HTTP via **`app/services/runner_client.py::run_remote()`** (T073, when
+`HARNESS_RUNNER_URL` is set), which today shares the same 4-arg signature and MUST forward
+`explain`. Tier 1 (`:39`) and Tier 2 (`:82`) use the default (no attribution, no cost), Tier 3
+(`:62`) passes `explain=True`. The global `HARNESS_GROUNDING_EXPLAINER` selects *which*
+extractor Tier 3 uses; it does not by itself trigger attribution.
 
-### Timing-separation path (FR-308, R3 — concrete split)
+### Timing-separation path (FR-308, R3 — concrete split + mechanism)
 `latency_ms_per_image`/`throughput`/`edge_deployable` stay sourced from the **clean** forward.
-Since attribution is produced inside the `predict()` that `run_inference` times, the
-`explain=True` path times the clean forward and the extractor **separately** and reports both
-as distinct `JobResult.timing` keys (`predict_s` = clean, `explain_s` = extractor); `run_tier3`
-derives the resource profile from `predict_s` only. This is a change to the
-`run_inference`/adapter **timing contract** (not `orchestrator.py`); for `explain=False` the
-clean-pass timing is byte-for-byte as today. (Corrects the earlier "separately and untimed"
-phrasing, which had no seam — review finding #2.)
+Today `job.py` times the whole `adapter.predict()` as one span (`job.py:105-110`) and builds
+`predict_s`/`latency_ms_per_image` from it (`job.py:118-123`). **Pinned mechanism (second-round
+review):** the split is achieved with a **separate, separately-timed `explain()` adapter step**,
+not by changing `predict()`'s return type. When `spec["explain"]` is set, `job.py` runs the
+timed clean `predict()` (→ `predict_s`, unchanged) **then** a separately-timed
+`adapter.explain(model, images, preds)` (→ `explain_s`) that attaches attribution to the
+predictions. `run_tier3` derives the resource profile from `predict_s` **only**; `explain_s`
+never enters it. The `InferenceAdapter` protocol (`base.py`) therefore gains an optional
+`explain()` (default: return `preds` unchanged — no-op for ONNX; the stub emits its synthetic
+attribution here; the pytorch adapter runs D-RISE/Grad-CAM here). This is a localized change to
+the `run_inference`/`job.py`/`runner_client.py`/`InferenceAdapter` contracts (**not**
+`orchestrator.py`, not a transaction change); for `explain=False` the clean-pass timing is
+byte-for-byte as today. (Corrects the earlier "separately and untimed" phrasing, which named no
+seam — review finding #2 and its follow-up.)
 
 ### Canonicalization path (FR-305, the F6 fix)
 `metrics.canonicalize()` is extended to remap the `attribution` channel's labels via the
@@ -141,13 +154,17 @@ specs/004-real-model-grounding/
 backend/engine/metrics/grounding_drise.py      # NEW: seeded-mask saliency → point + energy (FR-301/302/303)
 backend/engine/metrics/grounding_gradcam.py    # NEW: class-discriminative CAM extractor (FR-307)
 backend/engine/metrics/grounding.py            # (unchanged evaluator; may gain an energy-map helper)
-backend/engine/sandbox/runner.py               # run_inference gains explain: bool = False; timing split
-                                               #   predict_s (clean) vs explain_s (extractor) (FR-306a/308)
-backend/engine/adapters/pytorch_adapter.py     # _predict_det explain step + clean/explain timing split (FR-301/308)
+backend/engine/sandbox/runner.py               # run_inference gains explain: bool = False; forward to BOTH legs
+                                               #   (spec dict → job.py, and run_remote HTTP body) (FR-306a/308)
+backend/engine/sandbox/job.py                  # run(spec): read spec["explain"]; after timed clean predict(),
+                                               #   run separately-timed adapter.explain() → timing predict_s/explain_s (FR-306a/308)
+backend/app/services/runner_client.py          # run_remote gains explain + forwards it in the HTTP body (T073 path) (FR-306a)
+backend/engine/adapters/pytorch_adapter.py     # NEW adapter.explain(): run D-RISE/Grad-CAM, attach attribution (FR-301)
+backend/engine/adapters/stub_adapter.py        # move synthetic attribution from predict() into explain() (Tier-3-only now)
 backend/engine/tiers/tier1_capability.py       # pass explain=False (default — no change in effect) (FR-306a)
 backend/engine/tiers/tier2_stress.py           # pass explain=False (default — no change in effect) (FR-306a)
-backend/engine/adapters/base.py                # update Prediction.attribution docstring to the combined
-                                               #   {label, point, energy_inside} shape when FR-303 lands (finding #6)
+backend/engine/adapters/base.py                # InferenceAdapter.explain() protocol (default no-op returns preds);
+                                               #   update Prediction.attribution docstring to combined shape (FR-303, finding #6)
 backend/engine/metrics/__init__.py             # canonicalize() remaps attribution labels (FR-305)
 backend/engine/tiers/tier3_ops.py              # pass explain=True; from_dict → canonicalize attributions via
                                                #   dataset.manifest.label_map (mirrors tier1:53-55); latency from
@@ -171,7 +188,8 @@ existing Tier-3 / adapter seams — no new service, no schema, no new evidence s
   determinism seeding, and the canonicalization fix.
 - **Phase 1** — tests first (saliency determinism + math; pointing-game hit/miss fixture;
   canonicalization guard; timing-exclusion assertion), observed failing.
-- **Phase 2** — D-RISE extractor + `_predict_det` explain step (default on) + config surface.
+- **Phase 2** — D-RISE extractor + `adapter.explain()` step + `run_inference`/`job.py`/
+  `runner_client` explain seam (Tier-3-only, timing split) + config surface.
 - **Phase 3** — the F6 canonicalization fix: `canonicalize()` attribution remap + thread
   `label_map` into Tier 3 + evaluate canonicalized attributions.
 - **Phase 4** — timing separation (explain untimed) + bounded/logged image cap + Grad-CAM
@@ -187,12 +205,16 @@ seeded masks → peak/energy); most else reuses existing seams — the `attribut
 `GroundingEvidence` contract already exist (002 US5), canonicalization already exists for
 other channels (extended here), and the gate/routing/evidence store are untouched.
 
-**One modest contract change (post-review):** `run_inference` gains an `explain: bool = False`
-parameter and a **clean-vs-explain timing split** in `JobResult.timing` (`predict_s` /
-`explain_s`). This is required to (a) confine the expensive extractor to Tier 3 — it is
-tier-agnostic today (FR-306a / review #1) — and (b) keep the resource profile honest
-(FR-308 / review #2). It is a localized change to the `run_inference`/adapter contract and the
-three tier call-sites; it is **not** an orchestrator or transaction change, and `explain=False`
-preserves today's behavior byte-for-byte. Correctness risks — foreign-vocabulary false-fail
-(FR-305) and the explain-in-every-tier cost (FR-306a) — are each closed by a dedicated
-Phase-1 test.
+**One localized contract change (post-review, blast radius pinned in the 2nd round):** the
+explain seam touches five backend files, none of them the orchestrator or a transaction:
+`run_inference` (`runner.py`) gains `explain: bool = False` and forwards it down **both** legs;
+`job.py::run(spec)` reads `spec["explain"]` and runs a separately-timed `adapter.explain()`
+after the clean `predict()`, building `predict_s`/`explain_s`; `runner_client.run_remote()`
+forwards `explain` in the HTTP body (the T073 remote path); the `InferenceAdapter` protocol
+(`base.py`) gains an optional `explain()` (default no-op); and the stub's synthetic attribution
+moves from `predict()` into `explain()` (so it, too, is Tier-3-only — the grounding *verdict* is
+unchanged, satisfying FR-314). This is required to (a) confine the expensive extractor to Tier 3
+— tier-agnostic today (FR-306a / review #1) — and (b) keep the resource profile honest
+(FR-308 / review #2). `explain=False` preserves today's behavior byte-for-byte on every leg.
+Correctness risks — foreign-vocabulary false-fail (FR-305) and explain-in-every-tier cost
+(FR-306a) — are each closed by a dedicated Phase-1 test (T111, T116).
