@@ -76,6 +76,14 @@ class PyTorchAdapter:
                         )
                     net = yolo
                     names = dict(yolo.names) if getattr(yolo, "names", None) else {}
+                    if not names:
+                        # without a class vocabulary, predictions fall back to
+                        # numeric labels that match neither the dataset nor the
+                        # label_map — fail loud rather than silently score ~0
+                        raise AdapterError(
+                            "Ultralytics classification checkpoint exposes no class "
+                            "names; cannot map predictions to a label space"
+                        )
                     is_yolo = True
                 else:
                     obj = torch.load(artifact_ref, map_location="cpu", weights_only=False)
