@@ -9,7 +9,6 @@ scored and the run routes correctly.
 
 from tests.conftest import (
     HEALTHY_SEG,
-    SEG_GOLDEN,
     det_manifest,
     register_golden,
     seg_manifest,
@@ -95,3 +94,5 @@ def test_segmentation_registration_stores_iou_floors(client):
     out = register_golden(client, seg_manifest())
     assert out["recall_floors"].get("pedestrian") == 0.4  # stored generic floor
     assert out["model_class"] == "segmentation"
+    # the floor is IoU-typed, surfaced so a consumer need not infer from model_class
+    assert out["floor_metric"] == "iou"

@@ -126,7 +126,8 @@ def _validate_mask(rle, expected: tuple[int, int] | None) -> str | None:
         h, w = int(size[0]), int(size[1])
     except (TypeError, ValueError):
         return "malformed_rle"
-    if h <= 0 or w <= 0 or not isinstance(counts, (str, bytes)):
+    if h <= 0 or w <= 0 or not isinstance(counts, (str, bytes)) or not counts:
+        # empty counts is never a valid RLE (matches golden-set registration)
         return "malformed_rle"
     try:
         from pycocotools import mask as coco_mask

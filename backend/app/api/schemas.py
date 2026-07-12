@@ -125,7 +125,11 @@ class GoldenSetOut(BaseModel):
     checksum: str
     conditions: list[Condition]
     safety_critical_classes: list[str]
+    # the per-class safety floors, keyed by class. `floor_metric` names what they
+    # are checked against ("recall" for detection/classification, "iou" for
+    # segmentation) so a consumer need not cross-reference model_class (FR-214).
     recall_floors: dict[str, float]
+    floor_metric: str = "recall"
     reevaluation_flagged: list[str] = []
 
 

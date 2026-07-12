@@ -162,6 +162,7 @@ def register_golden_set(
         conditions=gs.conditions,
         safety_critical_classes=gs.safety_critical_classes,
         recall_floors=gs.recall_floors,
+        floor_metric="iou" if is_segmentation else "recall",
         reevaluation_flagged=flagged,
     )
 

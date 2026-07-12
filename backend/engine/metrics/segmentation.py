@@ -114,13 +114,15 @@ def reduce_instances_to_semantic(
     per_class: dict[str, np.ndarray] = {}
     for i in order:
         inst = instances[i]
+        label = inst.get("label")
+        if label is None:
+            continue  # a mask without a class is not scorable — never a None bucket
         m = _safe_decode(inst.get("rle"), size)
         if m is None:
             continue
         fresh = m & ~claimed  # only pixels not already owned by a higher-conf instance
         if not fresh.any():
             continue
-        label = inst.get("label")
         if label not in per_class:
             per_class[label] = np.zeros(size, dtype=bool)
         per_class[label] |= fresh

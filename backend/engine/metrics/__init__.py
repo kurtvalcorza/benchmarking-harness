@@ -74,9 +74,10 @@ def evaluator_provenance(model_class: ModelClass, *, harness_version: str) -> di
             "version": harness_version,
         }
     configuration = dict(base["configuration"])
-    if model_class is ModelClass.detection:
-        # record the PINNED reference-evaluator version so a COCO number is
-        # reproducible against the exact implementation that produced it
+    if model_class in (ModelClass.detection, ModelClass.segmentation):
+        # record the PINNED reference-library version so a COCO-AP / mIoU number
+        # is reproducible against the exact pycocotools that produced it (both the
+        # detection evaluator and the segmentation RLE encode/decode depend on it)
         configuration["reference_version"] = _pycocotools_version()
     return {**base, "configuration": configuration, "version": harness_version}
 
