@@ -19,6 +19,13 @@ export HARNESS_GROUNDING_EXPLAINER=drise      # default | gradcam | none
 export HARNESS_DRISE_MASKS=256                # optional; bounds cost
 ```
 
+> **Cost note (on-by-default):** D-RISE adds roughly `N × (images needed to reach
+> grounding_min_samples targets)` extra forward passes to a Tier-3 run — with the defaults
+> `N=256`, ~20 targets, that's on the order of a few thousand nano-detector forward passes
+> (~1–2 min on the RTX 5070 Ti reference), bounded (FR-309) and configurable via
+> `HARNESS_DRISE_MASKS`. The first time a real detector reaches Tier 3 it will take
+> noticeably longer than a stub run; set `HARNESS_GROUNDING_EXPLAINER=none` to skip it.
+
 ## 2. Submit a real detection model
 
 ```bash

@@ -116,10 +116,15 @@ all**. A real COCO detector emits attribution on `"person"`/`"car"`; the golden 
 is `"pedestrian"`/`"vehicle"`. Pointing-game would class-match **zero** targets →
 `grounding ≈ 0` → **false fail**.
 
-**Fix (in-scope):** thread the golden set's `label_map` into Tier 3 and canonicalize
-attribution labels before `evaluate_grounding` (mirror how scoring canonicalizes
-labels for Tier 1/2). Extend `canonicalize()` to also remap the `attribution`
-channel for consistency. *The stub path is unaffected* (it already keys on the GT
+**Fix (in-scope):** canonicalize attribution labels in `run_tier3` using **the Tier-3
+benchmark dataset's own `manifest.label_map`** (`dataset.manifest.get("label_map")`, the
+seam Tier 1 uses at `tier1_capability.py:55`) before `evaluate_grounding`, and extend
+`canonicalize()` to also remap the `attribution` channel. **Correction (per @claude review
+of PR #18):** Tier 3 scores the registry stand-in benchmark
+(`resolve(get_benchmark(model_class).dataset)`), **not** the Tier-2 Golden Set — so the map
+must come from that benchmark dataset's manifest, not `golden.label_map`, and **no
+`orchestrator.py` change** is needed. See spec.md FR-305 / research.md R4 for the authoritative
+wording. *The stub path is unaffected* (it already keys on the GT
 label; owned samples use an identity `label_map`).
 
 ---

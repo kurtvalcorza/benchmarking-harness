@@ -73,22 +73,36 @@ two-phase separation is simpler and keeps the clean-pass timing byte-for-byte as
 
 ## R4. Attribution label canonicalization (F6) — the correctness fix
 
-**Decision**: Attribution labels MUST be canonicalized through the golden set `label_map`
-**before** grounding is evaluated. `metrics.canonicalize()` is extended to remap the
-`attribution` channel's labels (mirroring the existing `labels`/`masks` remap), and
-`tier3_ops._grounding_evidence` is threaded the `label_map` and evaluates over
-**canonicalized** attributions.
+**Decision**: Attribution labels MUST be canonicalized through **the Tier-3-resolved
+benchmark dataset's own `manifest.label_map`** **before** grounding is evaluated.
+`metrics.canonicalize()` is extended to remap the `attribution` channel's labels (mirroring
+the existing `labels`/`masks` remap), and `tier3_ops.run_tier3` canonicalizes the attributions
+using `dataset.manifest.get("label_map")` — **the exact seam Tier 1 uses**
+(`tier1_capability.py:55`: `canonicalize(preds, dataset.manifest.get("label_map") or {})`)
+— on the dataset it already resolves at `tier3_ops.py:61`, before `_grounding_evidence` scores.
 
 **Rationale**: pointing_game matches `attribution.label == gt.label`, and GT is in the
 canonical dataset vocabulary (`pedestrian`/`vehicle`) while a real COCO detector emits
 `person`/`car`. Today Tier 3 builds attributions from **raw** `job.predictions` with no
 canonicalization at all — so every foreign-vocabulary (i.e. real) detector would class-match
 zero targets and false-fail. This is the single highest-risk correctness gap in the feature.
-The stub path is unaffected (identity `label_map`, GT-space attribution labels).
+The stub path is unaffected (identity/absent `label_map`, GT-space attribution labels).
+
+**Critical seam correction**: Tier 3 scores against `resolve(get_benchmark(model_class).dataset)`
+— the **registry stand-in benchmark** (the same dataset Tier 1 scores `coco_ap_50_95` against),
+**not** the Tier-2 Golden Set (`golden.data_ref`/`golden.label_map`, threaded via
+`orchestrator.py`). The `label_map` MUST therefore come from that benchmark dataset's own
+`manifest.json`, whatever it is (present in fetched `data/`; absent → a harmless no-op on the
+bare synthetic sample, exactly like Tier 1). Threading the **Golden Set's** `label_map` would
+canonicalize against a map keyed for a *different dataset's* vocabulary — it would *look* fixed
+(canonicalization runs) while scoring against the wrong mapping, subtly reintroducing the
+false-fail. Consequently `run_tier3` needs no new argument and **no `orchestrator.py` change**;
+it canonicalizes from the `dataset` already in scope.
 
 **Alternatives**: have the adapter emit attribution already in dataset space — rejected: the
-adapter must not know the golden set's `label_map` (it lives with the *data*, not the model),
+adapter must not know any dataset's `label_map` (it lives with the *data*, not the model),
 exactly as detection/classification labels are canonicalized downstream, not in the adapter.
+Threading `golden.label_map` into Tier 3 — rejected per the seam correction above.
 
 ## R5. Determinism — seeded mask stream
 

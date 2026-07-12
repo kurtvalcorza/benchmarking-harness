@@ -85,11 +85,16 @@ distinct key that Tier 3 does **not** fold into `latency_ms_per_image`/`edge_pro
 
 ### Canonicalization path (FR-305, the F6 fix)
 `metrics.canonicalize()` is extended to remap the `attribution` channel's labels via the
-`label_map` (mirroring the `labels`/`masks` remap). `tier3_ops._grounding_evidence` — which
-today builds attributions from **raw** `job.predictions` — is threaded the golden set's
-`label_map` and evaluates over **canonicalized** attributions, so a COCO-vocabulary detector
-class-matches canonical GT. The stub path (identity `label_map`, GT-space labels) is
-unaffected.
+`label_map` (mirroring the `labels`/`masks` remap). `tier3_ops.run_tier3` — whose
+`_grounding_evidence` today builds attributions from **raw** `job.predictions` — canonicalizes
+the attributions using **the benchmark dataset's own `manifest.label_map`**
+(`dataset.manifest.get("label_map")`, the exact seam Tier 1 uses at `tier1_capability.py:55`),
+on the dataset it already resolves at `tier3_ops.py:61`, so a COCO-vocabulary detector
+class-matches canonical GT. This is the **registry stand-in benchmark** dataset (the same one
+Tier 1 scores), **not** the Tier-2 Golden Set — so `run_tier3` needs no new argument and **no
+`orchestrator.py` change**; using `golden.label_map` here would map against a different
+dataset's vocabulary and reintroduce the false-fail. The stub path (identity/absent
+`label_map`, GT-space labels) is unaffected.
 
 ### Evaluation + gate path (unchanged)
 `evaluate_grounding` (pointing_game / energy_inside_region), `min_samples`, the ratified
@@ -127,9 +132,9 @@ backend/engine/metrics/grounding.py            # (unchanged evaluator; may gain 
 backend/engine/adapters/pytorch_adapter.py     # _predict_det explain step; two-phase timing (FR-301/308)
 backend/engine/adapters/base.py                # (attribution channel already exists — no change)
 backend/engine/metrics/__init__.py             # canonicalize() remaps attribution labels (FR-305)
-backend/engine/tiers/tier3_ops.py              # thread label_map; evaluate canonicalized attributions;
-                                               #   exclude explain time from the resource profile (FR-305/308/309)
-backend/app/services/orchestrator.py           # pass golden-set label_map into Tier 3 (FR-305)
+backend/engine/tiers/tier3_ops.py              # canonicalize attributions via dataset.manifest.label_map
+                                               #   (mirrors tier1:55); exclude explain time from profile (FR-305/308/309)
+#   (no orchestrator.py change — Tier 3 uses the benchmark dataset it already resolves, not the Golden Set)
 backend/app/services/config.py                 # HARNESS_GROUNDING_EXPLAINER / DRISE_* config (FR-312)
 backend/engine/cards/generator.py + template   # surface the grounding method/provenance (FR-311)
 backend/tests/unit/test_grounding_drise.py     # NEW (FR-313)

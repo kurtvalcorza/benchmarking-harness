@@ -20,8 +20,8 @@ current spec set; `[ ]` = to confirm during/at implementation.
 ## Correctness (the F6 fix)
 
 - [x] The canonicalization gap is identified: `canonicalize()` skips `attribution` AND Tier 3 uses raw predictions → foreign-vocabulary false-fail (research R4, FR-305)
-- [x] The fix threads `label_map` into Tier 3 and remaps attribution labels; the stub path is unaffected (identity map)
-- [ ] A dedicated guard test asserts hit-with-canon vs miss-without-canon (T111)
+- [x] The fix canonicalizes in `run_tier3` via the **benchmark dataset's own `manifest.label_map`** (mirroring Tier 1), **not** the Golden Set's — corrected per @claude review; no `orchestrator.py` change; the stub path is unaffected (identity/absent map)
+- [ ] A dedicated guard test asserts hit-with-canon vs miss-without-canon **and** that it uses the Tier-3 benchmark dataset's manifest map, not a Golden Set map (T111)
 
 ## Determinism, timing, budget
 
@@ -34,7 +34,7 @@ current spec set; `[ ]` = to confirm during/at implementation.
 - [x] I Human-in-loop — the ratified gate + fail-closed routing are unchanged; a measured pass is only *possible*, never automatic below `0.30`
 - [x] II Licensing-clean — evidence holds points/scalars/method, no raw image pixels
 - [x] IV No-egress / append-only — the extractor runs the local model on in-memory masks in the sandbox; evidence stays content-addressed + append-only
-- [x] V Verify-first — method + evaluator_version + sample_count + resolvable evidence_ref travel with every measured result; determinism makes it reproducible
+- [x] V Verify-first — method + evaluator_version + sample_count + resolvable evidence_ref travel with every measured result; determinism makes it reproducible; the US5 provenance surfacing now has a light Phase-1 assertion (T115, per @claude review) so no FR ships untested
 - [x] VI Test-first — Phase-1 tests precede implementation (FR-313)
 
 ## Cross-artifact readiness

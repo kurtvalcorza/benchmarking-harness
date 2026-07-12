@@ -97,10 +97,18 @@ Reused unchanged: `HARNESS_GROUNDING_METHODS` (`pointing_game`, `energy_inside_r
 `metrics.canonicalize()` today rebuilds `Prediction` remapping `labels`, `label`,
 `class_scores`, and `masks` — **but not `attribution`**. It is extended to remap each
 attribution entry's `label` via the `label_map` (non-dict/invalid entries pass through
-unchanged, consistent with the mask-channel rule). `tier3_ops._grounding_evidence` — which
-today reads **raw** `job.predictions` — is threaded the golden set `label_map` and evaluates
-over canonicalized attributions. Result: a `person` attribution point inside a `pedestrian`
-box counts as a hit under `label_map {person: pedestrian}`.
+unchanged, consistent with the mask-channel rule). `tier3_ops.run_tier3` — whose
+`_grounding_evidence` today reads **raw** `job.predictions` — canonicalizes the attributions
+using **the benchmark dataset's own `manifest.label_map`** (`dataset.manifest.get("label_map")`,
+the same seam Tier 1 uses at `tier1_capability.py:55`), on the dataset it already resolves at
+`tier3_ops.py:61`. Result: a `person` attribution point inside a `pedestrian` box counts as a
+hit under that dataset's `label_map {person: pedestrian}`.
+
+**Seam (not the Golden Set):** Tier 3 scores against the **registry stand-in benchmark**
+(`resolve(get_benchmark(model_class).dataset)`), not the Tier-2 Golden Set, so the `label_map`
+comes from that benchmark dataset's `manifest.json`. `run_tier3` needs no new argument and
+**no `orchestrator.py` change** — using `golden.label_map` here would map against a different
+dataset's vocabulary and reintroduce the false-fail.
 
 ## Transaction boundaries (unchanged)
 

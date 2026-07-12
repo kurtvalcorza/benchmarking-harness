@@ -16,7 +16,7 @@ One entry per emitted detection:
 
 - `label` is the detection's class in the **model-emitted vocabulary**. It is canonicalized
   to the dataset label space by `canonicalize()` **before** grounding is evaluated (FR-305) —
-  the adapter MUST NOT apply the golden set `label_map` itself.
+  the adapter MUST NOT apply any dataset `label_map` itself (the map lives with the data).
 - `point` is `[x, y]` in **original-image pixel coordinates** — the same frame as the XYXY
   detection boxes the evaluator's `_inside()` compares against (FR-304). Both components finite.
 - `energy_inside` is finite in `[0, 1]` — the fraction of the saliency map's energy that falls
@@ -73,11 +73,15 @@ One entry per emitted detection:
 
 ## Canonicalization (FR-305)
 
-- `metrics.canonicalize()` MUST remap each attribution entry's `label` via the golden set
-  `label_map` (as it does for `labels`/`masks`); a non-dict/invalid entry passes through
-  unchanged.
+- `metrics.canonicalize()` MUST remap each attribution entry's `label` via a `label_map`
+  (as it does for `labels`/`masks`); a non-dict/invalid entry passes through unchanged.
 - The Tier-3 grounding path MUST evaluate over **canonicalized** attributions (not raw
-  predictions), so a foreign-vocabulary detector class-matches canonical GT.
+  predictions), using **the Tier-3-resolved benchmark dataset's own `manifest.label_map`**
+  (`dataset.manifest.get("label_map")`), the same seam Tier 1 uses (`tier1_capability.py:55`).
+- The `label_map` MUST come from that benchmark dataset (`resolve(get_benchmark(model_class).dataset)`),
+  **not** the Tier-2 Golden Set — Tier 3 scores a different dataset, so the Golden Set's
+  `label_map` would map against the wrong vocabulary and reintroduce the false-fail. No
+  `orchestrator.py` change is required; `run_tier3` already holds the dataset.
 
 ## Provenance (FR-311)
 

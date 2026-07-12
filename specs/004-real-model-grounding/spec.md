@@ -93,25 +93,35 @@ byte-identically on re-run.
 
 ### User Story 2 — Foreign-vocabulary attribution is canonicalized (Priority: P1) — ⬜ TODO
 
-A COCO-trained detector emits attribution on `person`/`car`; the golden set's ground
-truth is `pedestrian`/`vehicle`. The pointing-game matches attribution label against
-GT label, so attribution labels MUST be canonicalized through the golden set's
-`label_map` (F6) **before** grounding is evaluated — otherwise a correctly-grounded
-real model scores ≈ 0 (a false fail).
+A COCO-trained detector emits attribution on `person`/`car`; the Tier-3 benchmark
+dataset's ground truth is `pedestrian`/`vehicle`. The pointing-game matches attribution
+label against GT label, so attribution labels MUST be canonicalized through **the
+Tier-3-resolved benchmark dataset's own `manifest.label_map`** (F6) **before** grounding
+is evaluated — exactly as Tier 1 canonicalizes capability predictions
+(`tier1_capability.py:55`) — otherwise a correctly-grounded real model scores ≈ 0 (a
+false fail).
+
+> **Seam note (review):** Tier 3 scores against `resolve(get_benchmark(model_class).dataset)`
+> — the **registry stand-in benchmark** (the same dataset Tier 1 uses), **not** the Tier-2
+> Golden Set. The correct `label_map` is that benchmark dataset's `manifest.json` one; using
+> the Golden Set's `label_map` would map to a different dataset's vocabulary and silently
+> reintroduce the false-fail. `run_tier3` already has `dataset` in scope, so no orchestrator
+> change is needed.
 
 **Why this priority**: Without it, US1 silently produces false fails for every
 foreign-vocabulary (i.e. every real COCO) detector; P1, and a correctness bug.
 
-**Independent Test**: A detector emitting attribution on `person` against a golden set
-whose GT class is `pedestrian` with `label_map {person: pedestrian}` produces a
-pointing-game **hit** for a point inside the pedestrian box; without canonicalization
-the same input produces a miss.
+**Independent Test**: A detector emitting attribution on `person`, scored against a
+Tier-3 benchmark dataset whose GT class is `pedestrian` and whose `manifest.label_map`
+is `{person: pedestrian}`, produces a pointing-game **hit** for a point inside the
+pedestrian box; without canonicalization the same input produces a miss.
 
 **Acceptance Scenarios**:
 
-1. **Given** a `label_map` that renames `person → pedestrian`, **When** grounding is
-   evaluated, **Then** an attribution `{label: person, point: <inside pedestrian box>}`
-   is canonicalized to `pedestrian` and counts as a **hit**.
+1. **Given** the benchmark dataset's `manifest.label_map` renames `person → pedestrian`,
+   **When** grounding is evaluated, **Then** an attribution
+   `{label: person, point: <inside pedestrian box>}` is canonicalized to `pedestrian` and
+   counts as a **hit**.
 2. **Given** the stub grounding path (attribution already in the GT label space, identity
    `label_map`), **When** grounding is evaluated, **Then** behavior is **unchanged**
    (no regression to existing Tier-3 tests).
@@ -205,12 +215,17 @@ attributable and reproducible; P2.
   energy-inside-region input) per detection, so both approved methods are usable.
 - **FR-304** (US1) An attribution `point` MUST be in the **original-image pixel frame**
   (the same coordinate space as the XYXY boxes the grounding evaluator compares against).
-- **FR-305** (US2) Attribution labels MUST be **canonicalized through the golden set
-  `label_map` before grounding is evaluated**: `metrics.canonicalize()` MUST remap the
-  `attribution` channel's labels (as it already does for `labels`/`masks`), and the
-  Tier-3 grounding path MUST evaluate over **canonicalized** predictions/attributions
-  (today it uses raw `job.predictions` with no canonicalization). Otherwise a
-  foreign-vocabulary detector class-matches zero targets and false-fails (F6).
+- **FR-305** (US2) Attribution labels MUST be **canonicalized through the Tier-3-resolved
+  benchmark dataset's own `manifest.label_map` before grounding is evaluated**:
+  `metrics.canonicalize()` MUST remap the `attribution` channel's labels (as it already
+  does for `labels`/`masks`), and `tier3_ops.run_tier3` MUST canonicalize the attributions
+  using `dataset.manifest.get("label_map")` — the **same benchmark dataset it already
+  resolves** at `tier3_ops.py:61` and the **same seam Tier 1 uses** (`tier1_capability.py:55`)
+  — before `_grounding_evidence` scores them (today Tier 3 evaluates raw `job.predictions`
+  with no canonicalization). The `label_map` MUST come from that benchmark dataset's manifest,
+  **not** the Tier-2 Golden Set (which scores a different dataset); no `orchestrator.py`
+  change is required. Otherwise a foreign-vocabulary detector class-matches zero targets and
+  false-fails (F6).
 - **FR-306** (US1) The attribution extractor MUST run **on by default for detection**,
   selectable/disable via `HARNESS_GROUNDING_EXPLAINER` (`drise` | `gradcam` | `none`);
   `none` restores the prior `missing_attribution` behavior.
