@@ -95,8 +95,14 @@ services:
       HARNESS_SANDBOX_IMAGE: benchmarking-harness-sandbox:latest
       HARNESS_SANDBOX_WORKDIR: /srv/state/sandbox
       HARNESS_HOSTPATH_MAP: "/srv/backend=${PWD}/backend;/srv/state=${PWD}/.state;/srv/data=${PWD}/data;/srv/samples=${PWD}/samples"
-      # shared secret the worker presents; fail closed if unset (runner refuses /run)
-      HARNESS_RUNNER_TOKEN: ${HARNESS_RUNNER_TOKEN:?set HARNESS_RUNNER_TOKEN for the runner boundary}
+      # Shared secret the worker presents. Enforced by the runner APP, which fails
+      # closed (503 on /run) when unset — see runner/main.py. It is NOT a required
+      # `:?` compose var: Compose interpolates every service (even profile-disabled
+      # ones) before profile filtering, so a `:?` here would abort the default
+      # `docker compose up` even though the runner never starts outside the
+      # `production` profile. Set it when you run the runner:
+      #   HARNESS_RUNNER_TOKEN=<secret> docker compose --profile production up -d runner
+      HARNESS_RUNNER_TOKEN: ${HARNESS_RUNNER_TOKEN:-}
       # deliberately NOT set: HARNESS_RUNNER_URL — the runner executes locally
       # (it owns the socket) and must never delegate back to itself.
     ports:
