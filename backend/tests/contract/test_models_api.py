@@ -5,6 +5,7 @@ from tests.conftest import (
     WEAK_DET,
     det_manifest,
     register_golden,
+    seg_manifest,
     submit_model,
 )
 
@@ -37,6 +38,20 @@ def test_unknown_model_class_is_422(client):
             files={"weights": ("w.json", f)},
         )
     assert r.status_code == 422
+
+
+def test_unsupported_framework_class_pair_is_422_not_stored(client):
+    """segmentation+onnx is a supported framework and a scored class, but the
+    ONNX adapter has no segmentation runner — the submit guard must refuse it up
+    front (clear 422) instead of storing the version and infra-failing at load."""
+    with open(HEALTHY_DET, "rb") as f:
+        r = client.post(
+            "/models",
+            data={"name": "seg-onnx", "model_class": "segmentation", "framework": "onnx"},
+            files={"weights": ("w.json", f)},
+        )
+    assert r.status_code == 422, r.text
+    assert "segmentation" in r.text
 
 
 def test_unknown_framework_is_422(client):
@@ -115,3 +130,16 @@ def test_scorerless_registered_class_is_422_up_front(client):
         )
     assert r.status_code == 422
     assert "scorer" in r.text
+
+
+def test_segmentation_golden_set_accepts_recall_floors_as_iou_fallback(client):
+    """The published golden-set contract exposes `recall_floors`; a segmentation
+    set that declares its floors there (and omits `iou_floors`) must register,
+    not be rejected with a missing-floor 422."""
+    m = seg_manifest(
+        name="seg-golden-recall-fallback",
+        iou_floors={},
+        recall_floors={"pedestrian": 0.4},
+    )
+    r = client.post("/golden-sets", json=m)
+    assert r.status_code == 201, r.text

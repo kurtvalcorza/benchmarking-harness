@@ -48,7 +48,10 @@ def register_golden_set(
     # segmentation reports IoU, not recall → a segmentation golden set declares
     # per-class IoU floors; detection/classification keep recall floors (FR-214).
     is_segmentation = manifest.model_class is ModelClass.segmentation
-    floors = manifest.iou_floors if is_segmentation else manifest.recall_floors
+    # segmentation declares per-class IoU floors, but the published contract
+    # still exposes `recall_floors` as the floor field — accept it as a fallback
+    # so a client following that contract isn't rejected with a missing-floor 422.
+    floors = (manifest.iou_floors or manifest.recall_floors) if is_segmentation else manifest.recall_floors
     floor_metric = "IoU" if is_segmentation else "recall"
 
     missing_floors = [c for c in manifest.safety_critical if c not in floors]

@@ -136,3 +136,22 @@ def get_adapter(framework: str) -> InferenceAdapter:
 
 
 SUPPORTED_FRAMEWORKS = ("pytorch", "onnx", "stub")
+
+# Which model classes each adapter actually has a runner for. Declared here so
+# the submission API can reject an unsupported (framework, class) pair up front
+# with a clear 422, instead of accepting the upload and infra-failing at load
+# time (e.g. segmentation+onnx). Adapters still guard defensively at load.
+FRAMEWORK_CLASS_SUPPORT: dict[str, frozenset[ModelClass]] = {
+    "pytorch": frozenset(
+        {ModelClass.detection, ModelClass.classification, ModelClass.segmentation}
+    ),
+    "onnx": frozenset({ModelClass.detection, ModelClass.classification}),
+    "stub": frozenset(
+        {ModelClass.detection, ModelClass.classification, ModelClass.segmentation}
+    ),
+}
+
+
+def framework_supports_class(framework: str, model_class: ModelClass) -> bool:
+    """True if `framework`'s adapter has a runner for `model_class`."""
+    return model_class in FRAMEWORK_CLASS_SUPPORT.get(framework.lower(), frozenset())

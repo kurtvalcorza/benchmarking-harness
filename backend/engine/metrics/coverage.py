@@ -54,11 +54,22 @@ def _finite(x) -> bool:
 
 
 def score_issues(predictions: list[Prediction]) -> list[dict]:
-    """Non-finite (NaN/inf) scores or class probabilities → typed issues."""
+    """Non-finite (NaN/inf) scores or class probabilities → typed issues.
+
+    Covers detection `scores`, classification `class_scores`, and segmentation
+    per-instance mask `score` (which drives the reduction ordering, so a NaN
+    there must invalidate the run, not silently steer priority)."""
     issues: list[dict] = []
     for p in predictions:
-        bad = any(not _finite(s) for s in p.scores) or any(
-            not _finite(v) for v in p.class_scores.values()
+        mask_scores = [
+            inst["score"]
+            for inst in (getattr(p, "masks", None) or [])
+            if isinstance(inst, dict) and "score" in inst
+        ]
+        bad = (
+            any(not _finite(s) for s in p.scores)
+            or any(not _finite(v) for v in p.class_scores.values())
+            or any(not _finite(s) for s in mask_scores)
         )
         if bad:
             _add_issue(issues, "nan_score", p.image_id)

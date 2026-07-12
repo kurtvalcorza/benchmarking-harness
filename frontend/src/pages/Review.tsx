@@ -63,7 +63,7 @@ export function Review() {
             <tr>
               <th>Safety-critical class</th>
               <th>Condition</th>
-              <th>Recall</th>
+              <th>{breaches[0]?.metric === 'iou' ? 'IoU' : 'Recall'}</th>
               <th>Floor</th>
             </tr>
           </thead>
@@ -72,7 +72,7 @@ export function Review() {
               <tr key={i}>
                 <td className="breach">{b.cls}</td>
                 <td>{b.condition}</td>
-                <td>{b.recall ?? 'n/a'}</td>
+                <td>{b.value ?? b.recall ?? 'n/a'}</td>
                 <td>{b.floor ?? 'n/a'}</td>
               </tr>
             ))}

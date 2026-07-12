@@ -54,15 +54,18 @@ function SafetyTable({ run }: { run: RunDetail }) {
       })),
     )
   if (!rows.length) return null
+  // a run is gated on one per-class metric; label the column by its type so a
+  // segmentation IoU breach isn't hidden under a "Recall"/`n/a` cell.
+  const metricLabel = rows[0]?.metric === 'iou' ? 'IoU' : 'Recall'
   return (
     <>
-      <h3>Safety-critical per-class recall</h3>
+      <h3>Safety-critical per-class {metricLabel.toLowerCase()}</h3>
       <table>
         <thead>
           <tr>
             <th>Class</th>
             <th>Condition</th>
-            <th>Recall</th>
+            <th>{metricLabel}</th>
             <th>Floor</th>
             <th>OK</th>
           </tr>
@@ -72,7 +75,7 @@ function SafetyTable({ run }: { run: RunDetail }) {
             <tr key={i}>
               <td>{r.cls}</td>
               <td>{r.condition}</td>
-              <td>{r.recall ?? 'n/a'}</td>
+              <td>{r.value ?? r.recall ?? 'n/a'}</td>
               <td>{r.floor ?? 'n/a'}</td>
               <td>{r.ok ? '✓' : <span className="breach">BELOW FLOOR</span>}</td>
             </tr>
