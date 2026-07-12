@@ -15,13 +15,35 @@ socket the rest of the stack must not.
 
 import hmac
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from engine.sandbox.runner import SandboxError, run_inference
 
-app = FastAPI(title="Benchmarking Harness Runner", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Fail fast on a misconfigured production launch. The runner owns the
+    # container runtime socket, so it must NEVER accept traffic without its
+    # shared secret. _authorize() also 503s every /run when the token is unset
+    # (defense in depth), but the compose var is `${HARNESS_RUNNER_TOKEN:-}`
+    # (so the profile-gated service can't break the default `docker compose up`,
+    # see docker-compose.yml) — which means an operator who forgets the secret
+    # would otherwise get a running, /healthz-OK container that silently 503s
+    # every delegated evaluation. Refusing to boot turns that into a visible
+    # crash the operator/orchestrator catches before any traffic (Codex, PR #9).
+    if not os.environ.get("HARNESS_RUNNER_TOKEN"):
+        raise RuntimeError(
+            "HARNESS_RUNNER_TOKEN is unset; the runner owns the container socket "
+            "and refuses to start without its shared secret. Launch it with "
+            "HARNESS_RUNNER_TOKEN=<secret> docker compose --profile production up -d runner"
+        )
+    yield
+
+
+app = FastAPI(title="Benchmarking Harness Runner", version="0.1.0", lifespan=_lifespan)
 
 
 class RunRequest(BaseModel):
