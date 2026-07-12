@@ -9,8 +9,8 @@ restricted media is ever committed (Constitution II; enforced by
 
 | Path | Content | License |
 |---|---|---|
-| `samples/benchmarks/*` | Tiny **procedurally generated** synthetic images + annotations (drawn rectangles on noise, produced by `scripts/gen_samples.py`) | Owned — generated in-repo, MIT like the code |
-| `samples/golden/*` | Same synthetic generator; the demo Golden Test Sets | Owned |
+| `samples/benchmarks/*` | Tiny **procedurally generated** synthetic images + annotations (shapes on noise — boxes for detection, filled ellipses with owned COCO-RLE masks for the `segmentation-sample`, produced by `scripts/gen_samples.py`) | Owned — generated in-repo, MIT like the code |
+| `samples/golden/*` | Same synthetic generator; the demo Golden Test Sets (`det-golden`, `cls-golden`, `seg-golden`) | Owned |
 | `samples/models/*.stub.json` | Toy "stub model" weight files (JSON skill descriptors) | Owned |
 
 Nothing under `samples/` derives from any third-party dataset.
@@ -19,7 +19,7 @@ Nothing under `samples/` derives from any third-party dataset.
 
 | Dataset | Used for | How | License terms |
 |---|---|---|---|
-| Open Images V7 (subset) | Tier-1 stand-in + Golden Test Set stand-in for detection/classification | `scripts/fetch_open_images.py --class detection --n 200` (FiftyOne zoo) | Annotations **CC BY 4.0**; images individually **CC BY 2.0** (verify per image for redistribution — we don't redistribute, we fetch) |
+| Open Images V7 (subset) | Tier-1 stand-in + Golden Test Set stand-in for detection / classification / segmentation | `scripts/fetch_open_images.py --class {detection\|classification\|segmentation} --n 200` (FiftyOne zoo; `segmentation` pulls the instance-mask slice) | Annotations **CC BY 4.0**; images individually **CC BY 2.0** (verify per image for redistribution — we don't redistribute, we fetch) |
 
 Fetched data lands in `data/` (gitignored). Each registered Golden Test Set is
 checksummed at registration; the checksum is stamped on every Tier-2 result
