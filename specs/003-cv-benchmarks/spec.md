@@ -73,7 +73,7 @@ An operator sees a list of every model submission they are authorized to view, w
 
 ---
 
-### User Story 3 — Ultralytics YOLO classification models can be evaluated (Priority: P1) — ✅ DONE
+### User Story 3 — Ultralytics YOLO classification models can be evaluated (Priority: P1) — 🔄 IN REVIEW (PR #11)
 
 A submitter uploads an Ultralytics YOLO **classification** checkpoint (`yolov8n-cls.pt`) as a `classification`/`pytorch` model, and it loads and runs through the tiers rather than infra-failing.
 
@@ -104,6 +104,8 @@ A submitter uploads an image-segmentation model and it is gated on the standard 
 1. **Given** a segmentation golden set with a mask for every image, **When** a model omits or duplicates a prediction, **Then** coverage records it and it counts against the score (never silently favorable) — the US2/002 accounting rule extended to masks.
 2. **Given** a valid segmentation prediction set, **When** the capability metric is computed, **Then** `miou` (mean over per-class IoU) and per-class IoU are produced and agree with a reference computation within tolerance.
 3. **Given** an Ultralytics `-seg` checkpoint (`yolov8n-seg.pt`), **When** the adapter loads it, **Then** it loads via `YOLO()` (task must be `segment`) and predictions carry per-instance/per-class masks; a non-seg checkpoint under the segmentation class is rejected clearly.
+3a. **Given** a `segmentation` model submission, **When** it is uploaded, **Then** it is accepted for evaluation (not rejected `422` as an unsupported class) because `segmentation` is on the end-to-end scored-class allowlist.
+3b. **Given** a segmentation golden set that declares per-class **IoU** floors, **When** it is registered and a run scores below a floor, **Then** the floor is checked against per-class IoU (not per-class recall) and routes to adjudication — the golden set is never rejected by a recall-only schema.
 4. **Given** a segmentation run and a ratified `miou` capability threshold, **When** mIoU is below the minimum, **Then** the model is rejected at capability (parallel to detection); with an unratified threshold it routes to `pending_adjudication` (FR-012b), never a silent pass.
 5. **Given** a scored segmentation tier result, **When** it is persisted, **Then** it carries prediction coverage counts + evaluator provenance + dataset checksum (US2 evidence rules) and its mask evidence is content-addressed and reproducible (SC-004).
 
@@ -116,7 +118,7 @@ A submitter uploads an image-segmentation model and it is gated on the standard 
 - **FR-101** (US1) ✅ The profile-gated `runner` MUST NOT make the default `docker compose up` fail; the runner secret is enforced by the runner service at boot, not by a required compose variable. *(PR #9)*
 - **FR-102** (US2) ✅ The API MUST expose an object-scoped, role-gated `GET /models` list; each item MUST carry status, latest verdict, the gated capability metric, and an infra-failure reason when a run could not evaluate the model. *(PR #10)*
 - **FR-103** (US2) ✅ The frontend MUST present a Models/history view surfacing the above, including the infra-failure reason. *(PR #10)*
-- **FR-104** (US3) ✅ The PyTorch adapter MUST load an Ultralytics YOLO classification checkpoint (via `YOLO()`, task `classify`) and a fully-pickled timm/torchvision module, and MUST reject a bare state_dict with a clear message. *(PR #11)*
+- **FR-104** (US3) 🔄 The PyTorch adapter MUST load an Ultralytics YOLO classification checkpoint (via `YOLO()`, task `classify`) and a fully-pickled timm/torchvision module, and MUST reject a bare state_dict with a clear message. *(PR #11 — in review; US4 implementation depends on it landing on `main` first.)*
 
 ### New — Image segmentation (US4)
 
@@ -130,6 +132,8 @@ A submitter uploads an image-segmentation model and it is gated on the standard 
 - **FR-208** Segmentation tier results MUST carry prediction coverage + evaluator provenance + dataset checksum (US2 evidence rules); mask evidence MUST be content-addressed and reproducible (SC-004).
 - **FR-209** Tests MUST be written first and observed failing (Constitution VI): the mask coverage/scoring unit tests, the adapter shape-dispatch tests, and a live sandbox segmentation-runtime probe.
 - **FR-210** The Model Card MUST surface `miou` + per-class IoU for segmentation (the card already reserves the `miou` key).
+- **FR-213** `segmentation` MUST be added to the end-to-end scored-class allowlist (`engine.metrics.SCORED_CLASSES`) and the submission guard in `app/api/models.py` MUST accept it, with the contract test for scorerless registered classes updated. Otherwise a segmentation upload is rejected `422` **before** any scorer runs, so removing `NotImplementedError` from `evaluate()` (FR-203) is necessary but not sufficient.
+- **FR-214** The Tier-2 per-class safety-floor mechanism, today recall-only (`recall_floors` + `metrics['per_class_recall']`), MUST generalize so a segmentation golden set can declare per-class **IoU** floors that are checked against per-class IoU. Registration schema/storage and the Tier-2 floor check MUST both handle the segmentation metric; a segmentation golden set with IoU floors MUST NOT be rejected by a recall-only schema or flag every class as missing recall.
 
 ### Non-functional / invariants (unchanged, must hold)
 
@@ -142,7 +146,7 @@ A submitter uploads an image-segmentation model and it is gated on the standard 
 |---|---|---|---|
 | US1 compose default-up fix | P2 | ✅ Done | PR #9 `765a929` |
 | US2 models list / history view | P2 | ✅ Done | PR #10 `9647d75` |
-| US3 Ultralytics YOLO classification loader | P1 | ✅ Done (in review) | PR #11 |
+| US3 Ultralytics YOLO classification loader | P1 | 🔄 In review | PR #11 (must merge to `main` before US4 implementation) |
 | US4 image segmentation benchmark (mIoU) | P1 | ⬜ To build | this feature |
 
 ## Out of scope

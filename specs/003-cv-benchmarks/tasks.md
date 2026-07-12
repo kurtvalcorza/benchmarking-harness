@@ -19,7 +19,7 @@ These are captured for traceability; each is already merged or in review.
 - [x] T001 [US1] Stop the profile-gated `runner` secret from breaking the default `docker compose up` — `${HARNESS_RUNNER_TOKEN:-}` + runner lifespan fail-fast in `docker-compose.yml`, `backend/runner/main.py` (PR #9 `765a929`)
 - [x] T002 [US2] Object-scoped, role-gated `GET /models` + `ModelListItemOut` in `backend/app/api/models.py`, `backend/app/api/schemas.py`; contract in `openapi.yaml` + `security-boundary.md` (PR #10 `9647d75`)
 - [x] T003 [US2] Frontend Models/history page + nav + `client.listModels()` surfacing status, verdict, gated metric, and infra-failure reason — `frontend/src/pages/ModelsList.tsx`, `main.tsx`, `api/client.ts` (PR #10 `9647d75`)
-- [x] T004 [US3] PyTorch adapter loads Ultralytics YOLO classification checkpoints (dispatch on checkpoint shape; `is_yolo`; `_predict_cls` YOLO `.probs` path; clear state_dict rejection) in `backend/engine/adapters/pytorch_adapter.py` + unit tests (PR #11)
+- [~] T004 [US3] PyTorch adapter loads Ultralytics YOLO classification checkpoints (try `YOLO()` first, fall back to `torch.load`; `is_yolo`; `_predict_cls` YOLO `.probs` path; clear state_dict rejection; fail loud on empty class names) in `backend/engine/adapters/pytorch_adapter.py` + unit tests — **PR #11, IN REVIEW; must merge to `main` before US4 implementation so this branch inherits the loader**
 
 ## Phase 0 — Design for US4 (before code)
 
@@ -38,6 +38,7 @@ These are captured for traceability; each is already merged or in review.
 - [ ] T030 [US4] Add the mask channel to `Prediction` (+ `to_dict`/`from_dict`) in `backend/engine/adapters/base.py` (FR-201)
 - [ ] T031 [US4] `engine/metrics/segmentation.py`: `evaluate_segmentation()` → `miou` + per-class IoU with complete-coverage accounting (FR-202)
 - [ ] T032 [US4] Dispatch `segmentation` in `engine/metrics/__init__.py::evaluate()` (remove `NotImplementedError`) (FR-203)
+- [ ] T032a [US4] Add `segmentation` to `engine.metrics.SCORED_CLASSES` and accept it in the `app/api/models.py` submission guard; update the scorerless-class contract test — otherwise segmentation uploads 422 before scoring (FR-213)
 - [ ] T033 [US4] Coverage + evaluator provenance for masks (US2 evidence rules) in `engine/metrics/coverage.py` / scorer (FR-208)
 
 ## Phase 3 — Adapter (US4)
@@ -49,6 +50,7 @@ These are captured for traceability; each is already merged or in review.
 
 - [ ] T050 [US4] `scripts/fetch_*`: fetch a permissive segmentation slice (masks) into gitignored `data/` + an owned synthetic sample under `samples/` (FR-205)
 - [ ] T051 [US4] Golden-set registration accepts segmentation mask annotations + optional per-class IoU floors (FR-206)
+- [ ] T051a [US4] Generalize the Tier-2 per-class safety-floor path from recall-only to IoU: registration schema/storage for IoU floors + the `engine/tiers/tier2_stress.py` floor check reads per-class IoU for segmentation (today `recall_floors`/`per_class_recall` only) (FR-214)
 - [ ] T052 [US4] `backend/thresholds.yaml`: `segmentation.capability`/`domain_stress` `miou` thresholds (unratified until governance) (FR-207)
 - [ ] T053 [US4] Model Card surfaces `miou` + per-class IoU (FR-210)
 
