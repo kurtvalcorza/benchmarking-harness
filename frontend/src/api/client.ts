@@ -44,6 +44,27 @@ export interface ModelDetail extends ModelVersion {
   missing_card_fields: string[]
 }
 
+// One row of the oversight/history list (GET /models): a submission plus a
+// summary of its latest run — verdict, the gated capability metric, and an
+// infra-failure reason when a run could not evaluate the model.
+export interface ModelListItem {
+  id: string
+  model_id: string
+  name: string
+  model_class: ModelClass
+  version: string
+  framework: string
+  status: ModelStatus
+  submitted_at: string
+  submitted_by: string
+  latest_verdict: Verdict | null
+  evaluated_at: string | null
+  infra_ok: boolean
+  infra_error: string | null
+  headline_metric: string | null
+  headline_value: number | null
+}
+
 export interface GoldenSetRef {
   id: string | null
   version: string | null
@@ -162,6 +183,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   submitModel(form: FormData): Promise<ModelVersion> {
     return req('/models', { method: 'POST', body: form })
+  },
+  listModels(): Promise<ModelListItem[]> {
+    return req('/models')
   },
   getModel(id: string): Promise<ModelDetail> {
     return req(`/models/${id}`)

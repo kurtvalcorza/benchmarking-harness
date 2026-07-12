@@ -5,6 +5,7 @@ import { SignIn } from './auth/SignIn'
 import { clearToken, currentPrincipal } from './auth/session'
 import { AdjudicationQueue } from './pages/AdjudicationQueue'
 import { ModelDetail } from './pages/ModelDetail'
+import { ModelsList } from './pages/ModelsList'
 import { Review } from './pages/Review'
 import { Submit } from './pages/Submit'
 import './styles.css'
@@ -20,6 +21,12 @@ function App() {
   const canSubmit = principal.roles.includes('submitter')
   const canAdjudicate =
     principal.roles.includes('adjudicator') || principal.roles.includes('auditor')
+  // GET /models is object-scoped: auditor→all, submitter→own, adjudicator→flagged
+  // (governance holds no arbitrary model read, so it gets an empty list).
+  const canListModels =
+    principal.roles.includes('auditor') ||
+    principal.roles.includes('submitter') ||
+    principal.roles.includes('adjudicator')
 
   function signOut() {
     clearToken()
@@ -32,6 +39,7 @@ function App() {
         <span className="brand">⚖️ Model Benchmarking Harness</span>
         <nav>
           {canSubmit && <Link to="/">Submit</Link>}
+          {canListModels && <Link to="/models">Models</Link>}
           {canAdjudicate && <Link to="/adjudication">Adjudication queue</Link>}
         </nav>
         <span className="identity">
@@ -46,6 +54,10 @@ function App() {
           <Route
             path="/"
             element={canSubmit ? <Submit /> : <Forbidden action="submit models" />}
+          />
+          <Route
+            path="/models"
+            element={canListModels ? <ModelsList /> : <Forbidden action="list models" />}
           />
           <Route path="/models/:id" element={<ModelDetail />} />
           <Route
