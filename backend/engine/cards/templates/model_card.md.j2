@@ -19,12 +19,12 @@
 
 **Visual grounding (Tier 3)**: {{ grounding_summary }}
 
-### Safety-critical per-class recall
+### Safety-critical per-class {{ safety_metric_label }}
 {% if safety_rows %}
-| Class | Condition | Recall | Floor | OK |
+| Class | Condition | {{ safety_metric_label }} | Floor | OK |
 |---|---|---|---|---|
 {% for row in safety_rows -%}
-| {{ row.cls }} | {{ row.condition }} | {{ row.recall }} | {{ row.floor }} | {{ row.ok }} |
+| {{ row.cls }} | {{ row.condition }} | {{ row.value }} | {{ row.floor }} | {{ row.ok }} |
 {% endfor %}
 {%- else %}
 to be confirmed

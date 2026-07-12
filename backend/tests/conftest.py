@@ -13,9 +13,11 @@ sys.path.insert(0, str(BACKEND))
 SAMPLES = REPO / "samples"
 DET_GOLDEN = SAMPLES / "golden" / "det-golden"
 CLS_GOLDEN = SAMPLES / "golden" / "cls-golden"
+SEG_GOLDEN = SAMPLES / "golden" / "seg-golden"
 HEALTHY_DET = SAMPLES / "models" / "healthy_detector.stub.json"
 WEAK_DET = SAMPLES / "models" / "weak_detector.stub.json"
 HEALTHY_CLS = SAMPLES / "models" / "healthy_classifier.stub.json"
+HEALTHY_SEG = SAMPLES / "models" / "healthy_segmenter.stub.json"
 
 
 ALL_ROLES = ["submitter", "governance", "adjudicator", "auditor"]
@@ -91,6 +93,27 @@ def cls_manifest(**overrides) -> dict:
         "is_public": False,
         "domain": "local-context-demo",
         "data_ref": str(CLS_GOLDEN),
+    }
+    m.update(overrides)
+    return m
+
+
+def seg_manifest(**overrides) -> dict:
+    m = {
+        "name": "seg-golden",
+        "model_class": "segmentation",
+        "version": "v1",
+        "checksum": "auto",
+        "conditions": ["rain", "low_light", "fog"],
+        "safety_critical": ["pedestrian"],
+        # a segmentation set declares per-class IoU floors (FR-214); recall_floors
+        # stays empty (segmentation reports IoU, not recall)
+        "recall_floors": {},
+        "iou_floors": {"pedestrian": 0.4},
+        "license": "owned",
+        "is_public": False,
+        "domain": "local-context-demo",
+        "data_ref": str(SEG_GOLDEN),
     }
     m.update(overrides)
     return m

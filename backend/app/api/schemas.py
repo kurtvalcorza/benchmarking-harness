@@ -98,7 +98,14 @@ class GoldenSetManifestIn(BaseModel):
     checksum: str = Field(description="content hash, or 'auto' to compute from data_ref")
     conditions: list[Condition]
     safety_critical: list[str]
-    recall_floors: dict[str, float]
+    # per-class safety floors for detection/classification (checked against recall)
+    recall_floors: dict[str, float] = Field(default_factory=dict)
+    # per-class safety floors for SEGMENTATION (checked against IoU, FR-214);
+    # a segmentation set uses these instead of recall_floors
+    iou_floors: dict[str, float] = Field(
+        default_factory=dict,
+        description="per-class IoU floors for a segmentation golden set (FR-214)",
+    )
     license: str
     is_public: bool
     domain: str = "general"

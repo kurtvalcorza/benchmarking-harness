@@ -26,10 +26,14 @@ sys.path.insert(0, str(REPO / "backend"))
 CLASS_TO_BENCH = {
     "detection": "open-images-det-sample",
     "classification": "open-images-cls-sample",
+    "segmentation": "segmentation-sample",
 }
 # a small, road-scene-flavored label slice for the POC
 DET_LABELS = ["Car", "Person", "Traffic sign"]
 CLS_LABELS = ["Car", "Animal", "Building"]
+# Open Images segmentation masks are available for a subset of classes; reuse the
+# road-scene canonical vocabulary so one golden vocabulary serves det + seg.
+SEG_LABELS = ["Car", "Person"]
 # per-class canon maps: keeping these separate stops detection-only labels
 # (Person/Traffic sign) leaking into classification datasets and vice versa
 DET_CANON = {
@@ -41,6 +45,10 @@ CLS_CANON = {
     "Car": "vehicle",
     "Animal": "animal",
     "Building": "building",
+}
+SEG_CANON = {
+    "Car": "vehicle",
+    "Person": "pedestrian",
 }
 # model-emitted → canonical (F6): lets COCO-trained detectors (YOLO et al.)
 # score against the canonical label space; written into manifest.json
@@ -54,15 +62,60 @@ COCO_LABEL_MAP = {
 }
 
 
+def _label_types(model_class: str) -> list[str]:
+    return {
+        "detection": ["detections"],
+        "classification": ["classifications"],
+        "segmentation": ["segmentations"],
+    }[model_class]
+
+
+def _seg_objects(sample, w: int, h: int) -> list[dict]:
+    """Convert Open Images instance segmentations to full-image COCO-RLE masks.
+
+    FiftyOne stores each instance's mask as a bbox-local boolean array; we paint
+    it into a full-image canvas and RLE-encode (research.md R3). No raw image
+    pixels are embedded (Constitution II)."""
+    import numpy as np
+
+    from engine.metrics.segmentation import rle_encode
+
+    field = sample.ground_truth or getattr(sample, "segmentations", None)
+    objs: list[dict] = []
+    if not field:
+        return objs
+    for det in field.detections:
+        if det.label not in SEG_CANON or det.mask is None:
+            continue
+        x, y, bw, bh = det.bounding_box  # relative xywh
+        canvas = np.zeros((h, w), dtype=np.uint8)
+        x0, y0 = int(round(x * w)), int(round(y * h))
+        mask = np.asarray(det.mask).astype(np.uint8)
+        mh, mw = mask.shape[:2]
+        # clip the bbox-local mask into the image bounds
+        y1, x1 = min(y0 + mh, h), min(x0 + mw, w)
+        canvas[y0:y1, x0:x1] = mask[: y1 - y0, : x1 - x0]
+        if canvas.any():
+            objs.append(
+                {
+                    "label": SEG_CANON[det.label],
+                    "bbox": [x * w, y * h, (x + bw) * w, (y + bh) * h],
+                    "rle": rle_encode(canvas),
+                }
+            )
+    return objs
+
+
 def fetch_real(model_class: str, n: int, out: Path) -> None:
     import fiftyone.zoo as foz  # ml extra
 
-    label_types = ["detections"] if model_class == "detection" else ["classifications"]
-    labels = DET_LABELS if model_class == "detection" else CLS_LABELS
+    labels = {"detection": DET_LABELS, "classification": CLS_LABELS, "segmentation": SEG_LABELS}[
+        model_class
+    ]
     ds = foz.load_zoo_dataset(
         "open-images-v7",
         split="validation",
-        label_types=label_types,
+        label_types=_label_types(model_class),
         classes=labels,
         max_samples=n,
         shuffle=False,  # deterministic slice (Constitution IV)
@@ -91,6 +144,12 @@ def fetch_real(model_class: str, n: int, out: Path) -> None:
                         "bbox": [x * w, y * h, (x + bw) * w, (y + bh) * h],
                     }
                 )
+        elif model_class == "segmentation":
+            from PIL import Image
+
+            with Image.open(src) as im:
+                w, h = im.size
+            objs = _seg_objects(sample, w, h)
         elif model_class == "classification" and sample.positive_labels:
             for c in sample.positive_labels.classifications:
                 if c.label in CLS_CANON:
@@ -98,7 +157,8 @@ def fetch_real(model_class: str, n: int, out: Path) -> None:
                     break
         ann[img_id] = objs
     (out / "annotations.json").write_text(json.dumps(ann, indent=1))
-    if model_class == "detection":
+    if model_class in ("detection", "segmentation"):
+        # a COCO-vocabulary model (YOLO det/-seg) scores against the canonical labels
         (out / "manifest.json").write_text(json.dumps({"label_map": COCO_LABEL_MAP}, indent=1))
 
 

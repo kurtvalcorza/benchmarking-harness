@@ -40,6 +40,11 @@ class Prediction:
     labels: list[str] = field(default_factory=list)
     label: str | None = None
     class_scores: dict[str, float] = field(default_factory=dict)
+    # US4/segmentation: per-instance predicted masks — one entry per emitted
+    # instance: {"label": str, "score": float, "rle": {"size": [h, w],
+    # "counts": str}} (COCO RLE). Empty for non-segmentation predictions; the
+    # segmentation scorer reduces these to per-class semantic masks (FR-201).
+    masks: list[dict[str, Any]] = field(default_factory=list)
     # US5/T062: reproducible per-detection grounding attribution — one entry per
     # emitted localization claim: {"label", "point": [x, y]} (pointing game) or
     # {"label", "energy_inside": float} (attribution-map energy). This is the
@@ -56,6 +61,7 @@ class Prediction:
             "labels": self.labels,
             "label": self.label,
             "class_scores": self.class_scores,
+            "masks": self.masks,
             "attribution": self.attribution,
             "extra": self.extra,
         }
@@ -69,6 +75,7 @@ class Prediction:
             labels=d.get("labels") or [],
             label=d.get("label"),
             class_scores=d.get("class_scores") or {},
+            masks=d.get("masks") or [],
             attribution=d.get("attribution") or [],
             extra=d.get("extra") or {},
         )

@@ -30,6 +30,7 @@ def score_run(
     outcomes: list[TierOutcome],
     safety_breach: bool,
     declared_sources: list[str],
+    safety_metric: str = "recall",
 ) -> RunScore:
     failing = []
     for o in outcomes:
@@ -45,6 +46,7 @@ def score_run(
         safety_recall_breach=safety_breach,
         unratified_threshold=any(o.unratified for o in outcomes),
         provenance_incomplete=provenance_incomplete(declared_sources),
+        safety_metric=safety_metric,
     )
     return RunScore(
         verdict=decide_verdict(inp),

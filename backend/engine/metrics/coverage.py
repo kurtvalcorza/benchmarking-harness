@@ -11,6 +11,9 @@ Typed issue codes (bounded examples, never the raw predictions):
 - ``unexpected_prediction``  a prediction references an unknown image
 - ``nan_score``              a non-finite score/probability
 - ``malformed_output``       structurally invalid prediction (e.g. bad boxes)
+- ``malformed_rle``          a segmentation mask whose RLE does not decode
+- ``mask_dim_mismatch``      a mask sized differently from the dataset image
+- ``mask_out_of_range``      a decoded mask area is negative or exceeds H×W
 """
 
 from __future__ import annotations
@@ -88,6 +91,78 @@ def shape_issues(predictions: list[Prediction]) -> list[dict]:
     return issues
 
 
+_MASK_ISSUE_CODES = ("malformed_rle", "mask_dim_mismatch", "mask_out_of_range")
+
+
+def _expected_dims(annotations: dict[str, list[dict]]) -> dict[str, tuple[int, int]]:
+    """(H, W) per image taken from the ground-truth mask, for the dim check."""
+    dims: dict[str, tuple[int, int]] = {}
+    for image_id, objs in annotations.items():
+        for obj in objs:
+            rle = obj.get("rle") if isinstance(obj, dict) else None
+            size = rle.get("size") if isinstance(rle, dict) else None
+            if isinstance(size, (list, tuple)) and len(size) == 2:
+                try:
+                    dims[image_id] = (int(size[0]), int(size[1]))
+                    break
+                except (TypeError, ValueError):
+                    continue
+    return dims
+
+
+def _validate_mask(rle, expected: tuple[int, int] | None) -> str | None:
+    """Typed error code for a malformed/mismatched mask payload, or None (FR-216).
+
+    A malformed mask is NEVER a silent empty score or a scorer crash: decode
+    failures and nonsense areas surface as typed coverage errors instead.
+    """
+    if not isinstance(rle, dict):
+        return "malformed_rle"
+    size = rle.get("size")
+    counts = rle.get("counts")
+    if not (isinstance(size, (list, tuple)) and len(size) == 2):
+        return "malformed_rle"
+    try:
+        h, w = int(size[0]), int(size[1])
+    except (TypeError, ValueError):
+        return "malformed_rle"
+    if h <= 0 or w <= 0 or not isinstance(counts, (str, bytes)):
+        return "malformed_rle"
+    try:
+        from pycocotools import mask as coco_mask
+
+        counts_b = counts.encode("ascii") if isinstance(counts, str) else counts
+        decoded = coco_mask.decode({"size": [h, w], "counts": counts_b})
+    except Exception:  # noqa: BLE001 — any decode failure is a malformed mask
+        return "malformed_rle"
+    if getattr(decoded, "shape", None) != (h, w):
+        return "malformed_rle"
+    if expected is not None and (h, w) != expected:
+        return "mask_dim_mismatch"
+    area = int(decoded.sum())
+    if area < 0 or area > h * w:
+        return "mask_out_of_range"
+    return None
+
+
+def mask_issues(predictions: list[Prediction], annotations: dict[str, list[dict]]) -> list[dict]:
+    """Typed issues for structurally invalid SEGMENTATION mask payloads (FR-216).
+
+    Each predicted instance mask is validated (RLE decodes, size matches the
+    dataset image dimensions, area within bounds). One issue per prediction is
+    enough evidence; masks are only present on segmentation predictions."""
+    dims = _expected_dims(annotations)
+    issues: list[dict] = []
+    for p in predictions:
+        for inst in getattr(p, "masks", None) or []:
+            rle = inst.get("rle") if isinstance(inst, dict) else None
+            code = _validate_mask(rle, dims.get(p.image_id))
+            if code:
+                _add_issue(issues, code, p.image_id)
+                break  # one masked-prediction issue is sufficient evidence
+    return issues
+
+
 def compute_coverage(predictions: list[Prediction], annotations: dict[str, list[dict]]) -> Coverage:
     """Coverage of `predictions` against the registered dataset's image ids.
 
@@ -119,9 +194,10 @@ def compute_coverage(predictions: list[Prediction], annotations: dict[str, list[
 
     issues.extend(score_issues(predictions))
     issues.extend(shape_issues(predictions))
+    issues.extend(mask_issues(predictions, annotations))
 
     valid = duplicate_count == 0 and unexpected_count == 0 and not any(
-        i["code"] in ("nan_score", "malformed_output") for i in issues
+        i["code"] in ("nan_score", "malformed_output", *_MASK_ISSUE_CODES) for i in issues
     )
     return Coverage(
         expected_count=len(expected_ids),

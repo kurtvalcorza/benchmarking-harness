@@ -1,0 +1,10 @@
+{
+  "kind": "stub-model",
+  "task": "segmentation",
+  "skill": 0.95,
+  "class_skill": {},
+  "brightness_sensitivity": 0.35,
+  "grounding": 0.8,
+  "param_count": 3400000,
+  "note": "Owned synthetic demo weights (Constitution II). A capable segmenter that emits per-instance masks from ground truth, mildly sensitive to adverse conditions."
+}

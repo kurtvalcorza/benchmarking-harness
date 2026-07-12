@@ -263,6 +263,7 @@ def evaluate_version(version_id: str, *, intent_id: str | None = None) -> str | 
     run_id = run.id  # capture pre-commit: the instance detaches after the session closes
     outcomes: list[TierOutcome] = []
     safety_breach = False
+    safety_metric = "recall"  # "iou" for segmentation (FR-214); set when Tier 2 runs
     infra_error: str | None = None
     sandbox_mode_used: str | None = None
 
@@ -312,6 +313,7 @@ def evaluate_version(version_id: str, *, intent_id: str | None = None) -> str | 
                 else:
                     outcomes.extend(t2.outcomes)
                     safety_breach = t2.safety_breach
+                    safety_metric = t2.safety_metric
                     # FR-007: any condition below its RATIFIED threshold halts
                     # progression, even when another condition independently
                     # raised an unratified/safety flag — the flags still route
@@ -375,6 +377,7 @@ def evaluate_version(version_id: str, *, intent_id: str | None = None) -> str | 
                     outcomes=outcomes,
                     safety_breach=safety_breach,
                     declared_sources=declared_sources,
+                    safety_metric=safety_metric,
                 )
                 run.verdict = score.verdict
                 run.flag_trigger = score.flag_trigger
@@ -502,6 +505,16 @@ def _persist_tier_results(
             )
             grounding = {**grounding, "evidence_ref": g_ref, "evidence_digest": g_digest}
             metrics["grounding"] = grounding
+        # US4/T033b: persist the reduced per-class segmentation masks as their OWN
+        # content-addressed evidence and stamp the tier's metrics with the
+        # resolvable evidence_ref + evidence_digest (mask bytes never live in the
+        # metrics column) so a segmentation verdict is reproducible (FR-218).
+        seg_masks = evidence.pop("segmentation_masks", None)
+        if seg_masks is not None and metrics.get("miou") is not None:
+            s_ref, s_digest = _write_content_addressed(
+                stage.results_root, {"kind": "segmentation-masks", "masks": seg_masks}
+            )
+            metrics["segmentation_evidence"] = {"evidence_ref": s_ref, "evidence_digest": s_digest}
         payload = {
             "tier": o.tier.value,
             "condition": o.condition,
@@ -531,13 +544,15 @@ def _persist_tier_results(
         )
 
 
-def _write_grounding_artifact(results_root: Path, method, samples: list) -> tuple[str, str]:
-    """Persist the grounding attribution at a content-addressed path and return
-    (resolvable_path, sha256). Digest-keyed so the reference is reproducible
-    across reruns (SC-004) while remaining a real file an auditor can open."""
+def _write_content_addressed(results_root: Path, payload: dict) -> tuple[str, str]:
+    """Persist `payload` at a content-addressed path and return (resolvable_path,
+    sha256). Digest-keyed so the reference is reproducible across reruns (SC-004)
+    while remaining a real file an auditor can open. Idempotent: identical
+    evidence → same path/bytes, written once. Shared by grounding + segmentation
+    mask evidence."""
     import hashlib
 
-    body = json.dumps({"method": method, "samples": samples}, indent=2, default=str).encode("utf-8")
+    body = json.dumps(payload, indent=2, default=str).encode("utf-8")
     digest = hashlib.sha256(body).hexdigest()
     ev_dir = Path(results_root) / "evidence"
     ev_dir.mkdir(parents=True, exist_ok=True)
@@ -545,6 +560,11 @@ def _write_grounding_artifact(results_root: Path, method, samples: list) -> tupl
     if not artifact.exists():  # content-addressed → identical evidence, one file
         artifact.write_bytes(body)
     return str(artifact), digest
+
+
+def _write_grounding_artifact(results_root: Path, method, samples: list) -> tuple[str, str]:
+    """Persist the grounding attribution as content-addressed evidence (T066)."""
+    return _write_content_addressed(results_root, {"method": method, "samples": samples})
 
 
 def _upsert_card(

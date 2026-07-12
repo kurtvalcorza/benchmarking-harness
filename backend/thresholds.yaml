@@ -35,6 +35,20 @@ classification:
     minimum: 0.30
     ratified: true
 
-# segmentation / pose / lane / face: registered in the benchmark registry but
-# thresholds deliberately unset → any run lands in pending_adjudication until
-# governance ratifies values (FR-006, FR-012b, FR-025).
+segmentation:
+  # miou = semantic mean IoU (segmentation-metric.md). The scorer + slot ship
+  # now; the NUMBER is unratified (ratified: false) until governance sets it, so
+  # every segmentation run routes to pending_adjudication rather than silently
+  # passing/failing on a placeholder threshold (FR-207, FR-012b).
+  capability:
+    metric: miou
+    minimum: 0.50
+    ratified: false
+  domain_stress:
+    metric: miou
+    minimum: 0.40
+    ratified: false
+
+# pose / lane / face: registered in the benchmark registry but thresholds
+# deliberately unset → any run lands in pending_adjudication until governance
+# ratifies values (FR-006, FR-012b, FR-025).

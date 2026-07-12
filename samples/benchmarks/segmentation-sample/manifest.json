@@ -1,0 +1,10 @@
+{
+ "label_map": {
+  "person": "pedestrian",
+  "car": "vehicle",
+  "truck": "vehicle",
+  "bus": "vehicle",
+  "stop sign": "traffic_sign",
+  "traffic light": "traffic_sign"
+ }
+}

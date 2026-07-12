@@ -45,17 +45,20 @@ class FlagInput:
     """Everything the flag rule needs about a completed run (FR-012)."""
 
     all_thresholds_met: bool
-    safety_recall_breach: bool  # (a) safety-critical recall < floor, clean OR any condition
+    safety_recall_breach: bool  # (a) safety-critical per-class metric < floor, clean OR any condition
     unratified_threshold: bool  # (b) any applied threshold unset/unratified
     provenance_incomplete: bool  # (c) declared training provenance missing/empty
     infra_ok: bool = True
+    # the metric the safety floor was checked against ("recall" for detection/
+    # classification, "iou" for segmentation) so the trigger reads correctly (FR-214)
+    safety_metric: str = "recall"
 
 
 def flag_trigger(inp: FlagInput) -> str | None:
     """Return the adjudication trigger string, or None when no flag applies."""
     triggers = []
     if inp.safety_recall_breach:
-        triggers.append("safety_critical_recall_below_floor")
+        triggers.append(f"safety_critical_{inp.safety_metric}_below_floor")
     if inp.unratified_threshold:
         triggers.append("unratified_threshold")
     if inp.provenance_incomplete:

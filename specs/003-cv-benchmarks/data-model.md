@@ -54,12 +54,13 @@ Today the golden set persists `recall_floors: dict[str, float]` (per-class recal
 minimums). Generalize so a segmentation set can declare **per-class IoU floors**
 without a recall-only schema rejecting it (FR-214):
 
-- Preferred: a metric-typed `class_floors: { metric: "iou" | "recall",
-  values: dict[str, float] }`, with `recall_floors` retained as the detection/
-  classification alias for backward compatibility; OR
-- Minimal: keep `recall_floors` as the column but interpret it against the class
-  metric (recall for detection/classification, IoU for segmentation) — chosen at
-  implementation, recorded in data-model on landing.
+**LANDED (minimal, no migration):** the existing `recall_floors` JSON column is
+the GENERIC per-class safety-floor store — recall floors for detection/
+classification, IoU floors for segmentation. The manifest gains an `iou_floors`
+field; a segmentation registration reads `iou_floors` (else `recall_floors`) and
+stores it into that same column. Tier-2 (`safety_critical_floors`) checks the
+stored floors against the class's per-class metric (`per_class_recall` /
+`per_class_iou`). No new column ⇒ no Alembic migration.
 
 Registration MUST store the floors; Tier-2 MUST check them against the class's
 per-class metric.
@@ -104,7 +105,7 @@ lost/duplicate dispatch is idempotent. No new transaction shape.
 
 ## Migration
 
-Adding metric-typed class floors to `GoldenTestSet` (if a new column is chosen)
-requires an Alembic migration in the 002 migration chain; the mask evidence reuses
-the existing evidence store (no schema change). If the "reinterpret `recall_floors`"
-option is taken, no migration is needed.
+**LANDED: no migration.** The reinterpret-`recall_floors` option was taken, so
+`GoldenTestSet` gains no column; the mask evidence reuses the existing evidence
+store (content-addressed under `results/evidence/<digest>.json`). No Alembic
+migration is added to the 002 chain.
