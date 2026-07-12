@@ -137,9 +137,9 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
                 f"{row['metric']} {row['value']} vs floor {row['floor']}."
             )
     # the safety table header names the metric these rows are measured against
-    safety_metric_label = (safety_rows[0]["metric"].upper() if safety_rows else "recall").replace(
-        "RECALL", "Recall"
-    )
+    _METRIC_LABELS = {"recall": "Recall", "iou": "IoU"}
+    _metric = safety_rows[0]["metric"] if safety_rows else "recall"
+    safety_metric_label = _METRIC_LABELS.get(_metric, _metric.title())
     if not limitations:
         limitations = [TBC]
 
