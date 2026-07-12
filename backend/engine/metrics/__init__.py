@@ -113,9 +113,15 @@ def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> li
             key = label_map.get(k, k)
             merged_scores[key] = merged_scores.get(key, 0.0) + v
         # segmentation masks carry a per-instance label too: remap it, never drop
-        # the mask channel when rebuilding the Prediction (FR-215)
+        # the mask channel when rebuilding the Prediction (FR-215). A
+        # structurally invalid instance (non-dict) passes through UNCHANGED — it
+        # must reach coverage to be flagged malformed, not crash canonicalize
+        # (which runs before coverage on the label_map path).
         remapped_masks = [
-            {**m, "label": label_map.get(m.get("label"), m.get("label"))} for m in p.masks
+            {**m, "label": label_map.get(m.get("label"), m.get("label"))}
+            if isinstance(m, dict)
+            else m
+            for m in p.masks
         ]
         out.append(
             Prediction(

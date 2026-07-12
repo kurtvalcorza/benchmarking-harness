@@ -14,7 +14,7 @@ import pytest
 from pycocotools import mask as coco_mask
 
 from engine.adapters.base import Prediction
-from engine.metrics import compute_coverage
+from engine.metrics import canonicalize, compute_coverage
 from engine.metrics.segmentation import evaluate_segmentation
 
 SIZE = 8
@@ -215,3 +215,29 @@ def test_nonfinite_mask_score_is_a_typed_coverage_error():
     assert "nan_score" in _codes(cov)
     assert cov.valid is False
     evaluate_segmentation(preds, ann)  # must not raise despite the NaN score
+
+
+def test_canonicalize_tolerates_malformed_instance_on_label_map_path():
+    """canonicalize() runs BEFORE coverage/evaluate on the label_map path
+    (tier1/tier2); a non-dict mask instance must pass through unchanged — not
+    crash canonicalize — so coverage can still flag it malformed and the run
+    completes with invalid coverage instead of an infra failure."""
+    label_map = {"car": "vehicle"}
+    preds = [
+        _pred(
+            "a",
+            [
+                "not-a-dict",  # structurally invalid — must survive canonicalize
+                {"label": "car", "score": 0.9, "rle": _rle(_band(0, 4))},
+            ],
+        )
+    ]
+    out = canonicalize(preds, label_map)  # must not raise
+    masks = out[0].masks
+    assert masks[0] == "not-a-dict"  # passed through, still visible to coverage
+    assert masks[1]["label"] == "vehicle"  # dict instance remapped
+    # coverage on the canonicalized preds still flags the malformed entry
+    ann = {"a": [{"label": "vehicle", "rle": _rle(_band(0, 4))}]}
+    cov = compute_coverage(out, ann)
+    assert "malformed_rle" in _codes(cov)
+    assert cov.valid is False
