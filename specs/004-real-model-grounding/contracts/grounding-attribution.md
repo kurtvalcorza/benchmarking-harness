@@ -56,12 +56,15 @@ One entry per emitted detection:
 - The extractor MUST run **only in Tier 3**. `run_inference` is tier-agnostic, so an `explain:
   bool = False` parameter MUST be threaded through **both** its legs: the `spec` dict into
   `engine/sandbox/job.py::run(spec)` (where `adapter.predict()`/`explain()` run) **and** the
-  HTTP body of `app/services/runner_client.py::run_remote()` (the T073 remote path). Tier 1 and
-  Tier 2 call with the default (`explain=False` → no attribution, no extractor cost), and only
-  Tier 3 passes `explain=True`.
-- Attribution is produced by a separate `adapter.explain(model, images, preds)` step (an
-  optional `InferenceAdapter` method, default no-op), **not** inside `predict()` — so it can be
-  timed separately and skipped entirely when `explain=False`.
+  T073 HTTP round-trip — which has a **client and a server**: `runner_client.run_remote()` sends
+  `explain` in the body **and** `backend/runner/main.py`'s `RunRequest` + `POST /run` MUST accept
+  and forward it (else Pydantic drops it and Tier-3 attribution silently no-ops under
+  `HARNESS_RUNNER_URL`). Tier 1 and Tier 2 call with the default (`explain=False` → no
+  attribution, no extractor cost), and only Tier 3 passes `explain=True`.
+- Attribution is produced by a separate `adapter.explain(model, images, preds)` step — an
+  **optional** member of the `InferenceAdapter` `Protocol`, invoked via
+  `getattr(adapter, "explain", None)` (pytorch + stub implement it; ONNX/others skip) — **not**
+  inside `predict()`, so it can be timed separately and skipped entirely when `explain=False`.
 - `HARNESS_GROUNDING_EXPLAINER` selects *which* extractor Tier 3 uses; it MUST NOT by itself
   cause attribution to run in any tier.
 

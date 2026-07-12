@@ -256,9 +256,15 @@ attributable and reproducible; P2.
   attribution: `run_inference(..., explain: bool = False)` (default off) forwarded down **the
   whole execution path**, which has two legs (second-round review): the serialized `spec` dict
   into `engine/sandbox/job.py::run(spec)` (subprocess/docker — where `adapter.predict()` runs,
-  `job.py:107`) **and** the HTTP body of `app/services/runner_client.py::run_remote()` (the
-  T073 dedicated-runner path, when `HARNESS_RUNNER_URL` is set). Tier 1/2 call with the default
-  (`explain=False` → no attribution, no cost), Tier 3 with `explain=True`.
+  `job.py:107`) **and** the HTTP call to the dedicated runner service. The HTTP leg has a
+  **client and a server**, both of which MUST carry `explain` (third-round review):
+  `app/services/runner_client.py::run_remote()` sends it in the body, **and**
+  `backend/runner/main.py` MUST accept it — `RunRequest` (`main.py:49-53`) gains
+  `explain: bool = False` and the `POST /run` handler (`main.py:76-90`) forwards it to its local
+  `run_inference(...)`. Otherwise Pydantic silently drops the unknown field and Tier-3
+  attribution **silently no-ops whenever `HARNESS_RUNNER_URL` is configured** (the T073
+  production profile — a silent empty-attribution failure, not a loud one). Tier 1/2 call with
+  the default (`explain=False` → no attribution, no cost), Tier 3 with `explain=True`.
 - **FR-307** (US3) A **Grad-CAM** extractor MUST be available as a selectable alternative
   (class-discriminative CAM over the detection head), producing the same
   `{label, point, energy_inside}` envelope; a binding failure on an unsupported
@@ -273,10 +279,14 @@ attributable and reproducible; P2.
   type): when `spec["explain"]` is set, `job.py` runs the timed clean `predict()`
   (→ `predict_s`, unchanged) **then** a separately-timed `adapter.explain(model, images, preds)`
   (→ `explain_s`) that attaches attribution. `run_tier3` MUST derive `latency_ms_per_image`/
-  `throughput`/`edge_deployable` from the **clean** `predict_s` only. The `InferenceAdapter`
-  protocol gains an optional `explain()` (default no-op returning `preds`). This touches the
-  `run_inference`/`job.py`/`runner_client.py`/`InferenceAdapter` contracts (not
-  `orchestrator.py`); for `explain=False` every leg is byte-for-byte as today.
+  `throughput`/`edge_deployable` from the **clean** `predict_s` only. `InferenceAdapter` is a
+  `typing.Protocol` (no default method bodies — `base.py:105`), so `explain()` is an **optional**
+  member and `job.py` MUST invoke it via `getattr(adapter, "explain", None)` — calling it when
+  present and `spec["explain"]`, skipping otherwise. Only the pytorch and stub adapters implement
+  `explain()`; ONNX and any other adapter need **no** change (the `getattr` guard is the no-op).
+  This touches the `run_inference`/`job.py`/`runner_client.py`/`backend/runner/main.py`/
+  `InferenceAdapter` contracts (not `orchestrator.py`); for `explain=False` every leg is
+  byte-for-byte as today.
 - **FR-309** (US4) The extractor MUST be **bounded**: explain only enough images to reach
   `grounding_min_samples` target instances, and MUST `log()` the cap so coverage is
   honest (no silent truncation).

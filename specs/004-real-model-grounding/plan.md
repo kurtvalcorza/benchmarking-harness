@@ -158,13 +158,16 @@ backend/engine/sandbox/runner.py               # run_inference gains explain: bo
                                                #   (spec dict → job.py, and run_remote HTTP body) (FR-306a/308)
 backend/engine/sandbox/job.py                  # run(spec): read spec["explain"]; after timed clean predict(),
                                                #   run separately-timed adapter.explain() → timing predict_s/explain_s (FR-306a/308)
-backend/app/services/runner_client.py          # run_remote gains explain + forwards it in the HTTP body (T073 path) (FR-306a)
+backend/app/services/runner_client.py          # run_remote (CLIENT) gains explain + sends it in the HTTP body (T073) (FR-306a)
+backend/runner/main.py                         # runner service (SERVER): RunRequest.explain: bool = False +
+                                               #   POST /run forwards it to run_inference — else it silently no-ops under
+                                               #   HARNESS_RUNNER_URL (Pydantic drops the unknown field) (FR-306a)
 backend/engine/adapters/pytorch_adapter.py     # NEW adapter.explain(): run D-RISE/Grad-CAM, attach attribution (FR-301)
 backend/engine/adapters/stub_adapter.py        # move synthetic attribution from predict() into explain() (Tier-3-only now)
 backend/engine/tiers/tier1_capability.py       # pass explain=False (default — no change in effect) (FR-306a)
 backend/engine/tiers/tier2_stress.py           # pass explain=False (default — no change in effect) (FR-306a)
-backend/engine/adapters/base.py                # InferenceAdapter.explain() protocol (default no-op returns preds);
-                                               #   update Prediction.attribution docstring to combined shape (FR-303, finding #6)
+backend/engine/adapters/base.py                # InferenceAdapter is a Protocol → explain() is OPTIONAL; job.py guards with
+                                               #   getattr(adapter, "explain", None). Update Prediction.attribution docstring (FR-303, finding #6)
 backend/engine/metrics/__init__.py             # canonicalize() remaps attribution labels (FR-305)
 backend/engine/tiers/tier3_ops.py              # pass explain=True; from_dict → canonicalize attributions via
                                                #   dataset.manifest.label_map (mirrors tier1:53-55); latency from
@@ -205,16 +208,19 @@ seeded masks → peak/energy); most else reuses existing seams — the `attribut
 `GroundingEvidence` contract already exist (002 US5), canonicalization already exists for
 other channels (extended here), and the gate/routing/evidence store are untouched.
 
-**One localized contract change (post-review, blast radius pinned in the 2nd round):** the
-explain seam touches five backend files, none of them the orchestrator or a transaction:
+**One localized contract change (post-review, blast radius pinned across three review rounds):**
+the explain seam touches these backend files, none of them the orchestrator or a transaction:
 `run_inference` (`runner.py`) gains `explain: bool = False` and forwards it down **both** legs;
 `job.py::run(spec)` reads `spec["explain"]` and runs a separately-timed `adapter.explain()`
-after the clean `predict()`, building `predict_s`/`explain_s`; `runner_client.run_remote()`
-forwards `explain` in the HTTP body (the T073 remote path); the `InferenceAdapter` protocol
-(`base.py`) gains an optional `explain()` (default no-op); and the stub's synthetic attribution
-moves from `predict()` into `explain()` (so it, too, is Tier-3-only — the grounding *verdict* is
-unchanged, satisfying FR-314). This is required to (a) confine the expensive extractor to Tier 3
-— tier-agnostic today (FR-306a / review #1) — and (b) keep the resource profile honest
-(FR-308 / review #2). `explain=False` preserves today's behavior byte-for-byte on every leg.
-Correctness risks — foreign-vocabulary false-fail (FR-305) and explain-in-every-tier cost
-(FR-306a) — are each closed by a dedicated Phase-1 test (T111, T116).
+(invoked via `getattr(adapter, "explain", None)`) after the clean `predict()`, building
+`predict_s`/`explain_s`; the T073 HTTP leg carries it on **both** sides —
+`runner_client.run_remote()` (client) sends it and `backend/runner/main.py`
+(`RunRequest`/`POST /run`, server) accepts + forwards it, else it silently no-ops under
+`HARNESS_RUNNER_URL`; `InferenceAdapter` (a `Protocol`) gains an **optional** `explain()`
+(pytorch + stub implement it, ONNX unchanged via the `getattr` guard); and the stub's synthetic
+attribution moves from `predict()` into `explain()` (Tier-3-only — grounding *verdict* unchanged,
+FR-314). This is required to (a) confine the expensive extractor to Tier 3 — tier-agnostic today
+(FR-306a / review #1) — and (b) keep the resource profile honest (FR-308 / review #2).
+`explain=False` preserves today's behavior byte-for-byte on every leg. Correctness risks —
+foreign-vocabulary false-fail (FR-305), explain-in-every-tier cost (FR-306a), and the silent
+remote-runner no-op — are each closed by a dedicated Phase-1 test (T111, T116, T117).

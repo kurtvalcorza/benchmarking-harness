@@ -99,8 +99,9 @@ The explain seam touches the full execution path, not just `run_inference` (revi
 
 | Element | Change |
 |---|---|
-| `run_inference(..., explain: bool = False)` | new param (`runner.py`); forwarded to **both** legs — the `spec` dict → `job.py`, and `runner_client.run_remote()`'s HTTP body (T073). Tier 1/2 use the default, **only** Tier 3 passes `explain=True` (FR-306a) |
-| `InferenceAdapter.explain(model, images, preds)` | new optional protocol method (`base.py`), default no-op returning `preds`; the stub emits its synthetic attribution here, the pytorch adapter runs D-RISE/Grad-CAM here |
+| `run_inference(..., explain: bool = False)` | new param (`runner.py`); forwarded to **both** legs — the `spec` dict → `job.py`, and the T073 HTTP round-trip. Tier 1/2 use the default, **only** Tier 3 passes `explain=True` (FR-306a) |
+| T073 HTTP leg — **client + server** | `runner_client.run_remote()` sends `explain` in the body **and** `backend/runner/main.py` `RunRequest` (`:49-53`) gains `explain: bool = False` + `POST /run` (`:76-90`) forwards it; else Pydantic drops it and Tier-3 attribution silently no-ops under `HARNESS_RUNNER_URL` |
+| `InferenceAdapter.explain(model, images, preds)` | **optional** member of the `Protocol` (`base.py:105`); `job.py` invokes via `getattr(adapter, "explain", None)`. pytorch + stub implement it; ONNX/others unchanged |
 | `engine/sandbox/job.py::run(spec)` | reads `spec["explain"]`; after the timed clean `predict()` runs a **separately-timed** `explain()`; builds `predict_s`/`explain_s` |
 | `JobResult.timing["predict_s"]` | the **clean** forward time (unchanged for `explain=False`) — the sole source of `latency_ms_per_image`/`throughput`/`edge_deployable` |
 | `JobResult.timing["explain_s"]` | the extractor time, present only when `explain=True`; **not** folded into the resource profile (FR-308) |

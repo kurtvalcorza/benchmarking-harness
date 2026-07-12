@@ -68,10 +68,12 @@ separately** via a dedicated `adapter.explain()` call. **Pinned mechanism (secon
 review):** rather than change `predict()`'s return type to carry timing, `job.py::run(spec)`
 runs the timed clean `predict()` (→ `predict_s`, unchanged) and, when `spec["explain"]`, a
 **separately-timed `adapter.explain(model, images, preds)`** (→ `explain_s`) that attaches
-attribution to the predictions. The `InferenceAdapter` protocol (`base.py`) gains an optional
-`explain()` — default no-op returning `preds` (ONNX); the stub emits its synthetic attribution
-there; the pytorch adapter runs D-RISE/Grad-CAM there. `run_tier3` derives the resource profile
-from `predict_s` only.
+attribution to the predictions. `InferenceAdapter` is a `typing.Protocol` (`base.py:105`,
+no default method bodies), so `explain()` is an **optional** member: `job.py` invokes it via
+`getattr(adapter, "explain", None)` and skips when absent. Only the pytorch adapter (D-RISE/
+Grad-CAM) and the stub (its synthetic attribution, moved out of `predict()`) implement it; ONNX
+and any other adapter need no change. `run_tier3` derives the resource profile from `predict_s`
+only.
 
 **Rationale**: D-RISE adds `N` forward passes per image; folding that into latency would
 wreck the edge-deployability signal and misrepresent the model. The resource profile must
@@ -95,12 +97,18 @@ its full execution path** — not just the tier call-sites. `run_inference` (`ru
 fans out to two legs, both of which must carry `explain` (second-round review): (a) the
 serialized `spec` dict into `engine/sandbox/job.py::run(spec)` (subprocess/docker), which is
 where `adapter.predict()` actually runs (`job.py:107`) and where `predict_s`/
-`latency_ms_per_image` are built (`job.py:118-123`); and (b) the HTTP body of
-`app/services/runner_client.py::run_remote()` (the T073 dedicated-runner path, when
-`HARNESS_RUNNER_URL` is set — same 4-arg signature today). Tier 1 and Tier 2 call with the
-default (no attribution, no extractor cost); **only Tier 3** calls `explain=True`. The global
-`HARNESS_GROUNDING_EXPLAINER` selects *which* extractor Tier 3 uses (`drise`/`gradcam`/`none`);
-it does **not** by itself cause attribution to run.
+`latency_ms_per_image` are built (`job.py:118-123`); and (b) the HTTP round-trip to the
+dedicated runner service (the T073 path, when `HARNESS_RUNNER_URL` is set). The HTTP leg has a
+**client and a server**, both of which must carry `explain` (third-round review): the client
+`app/services/runner_client.py::run_remote()` sends it in the body, **and** the server
+`backend/runner/main.py` must accept it — `RunRequest` (`main.py:49-53`) gains
+`explain: bool = False` and `POST /run` (`main.py:76-90`) forwards it to its local
+`run_inference(...)`. If the server side is missed, Pydantic silently drops the extra body field
+and Tier-3 attribution **silently no-ops under `HARNESS_RUNNER_URL`** — a silent failure, worse
+than the loud in-process one. Tier 1 and Tier 2 call with the default (no attribution, no
+extractor cost); **only Tier 3** calls `explain=True`. The global `HARNESS_GROUNDING_EXPLAINER`
+selects *which* extractor Tier 3 uses (`drise`/`gradcam`/`none`); it does **not** by itself cause
+attribution to run.
 
 **Rationale**: `run_inference` is tier-agnostic — the identical call is made in all three
 tiers (`tier1_capability.py:39`, `tier2_stress.py:82`, `tier3_ops.py:62`) over one shared

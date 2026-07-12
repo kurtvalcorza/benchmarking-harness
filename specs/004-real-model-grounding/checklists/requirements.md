@@ -31,8 +31,10 @@ current spec set; `[ ]` = to confirm during/at implementation.
 ## Explain seam + timing (post-merge review — the two HIGH findings)
 
 - [x] The extractor is scoped to **Tier 3 only** via an `explain: bool = False` seam through `run_inference`; Tier 1/2 never pay the cost (FR-306a, research R8, review #1)
-- [x] The seam's **full blast radius** is named (2nd-round review): `runner.py` + `job.py` (predict/timing) + `runner_client.py` (T073 HTTP leg) + `InferenceAdapter.explain()` protocol — not just the tier call-sites
+- [x] The seam's **full blast radius** is named (2nd + 3rd round): `runner.py` + `job.py` (predict/timing) + the T073 HTTP leg **client `runner_client.py` AND server `backend/runner/main.py`** (`RunRequest`/`POST /run` — else it silently no-ops under `HARNESS_RUNNER_URL`) + `InferenceAdapter.explain()` — not just the tier call-sites
+- [x] The optional-method **mechanism** is pinned: `InferenceAdapter` is a `Protocol`, so `job.py` invokes `explain()` via `getattr(adapter, "explain", None)` (pytorch + stub implement; ONNX/others skip) — no forced change to non-extractor adapters
 - [x] The timing-split **mechanism** is pinned: a separately-timed `adapter.explain()` step (not a `predict()` return-type change); `predict_s`/`explain_s` in `JobResult.timing`; `run_tier3` uses `predict_s` only; `explain=False` byte-for-byte on every leg (FR-308, research R3, review #2)
+- [ ] Phase-1 test T117 covers the remote-runner HTTP leg (T113/T116 do not)
 - [x] FR-305 mirrors Tier 1's `from_dict → canonicalize` sequence, so `canonicalize()` runs on `list[Prediction]` not `list[dict]` (FR-305, review #4)
 - [x] FR-303 reworded — energy is retained evidence; `evaluate_grounding` is first-applicable so `pointing_game` scores under the default (FR-303, review #3)
 - [x] `energy_inside_region` vs `pointing_game` `sample_count` divergence documented (FR-316, review #5); `Prediction.attribution` docstring update tasked (T145, review #6)
