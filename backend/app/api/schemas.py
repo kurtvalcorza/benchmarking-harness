@@ -34,6 +34,29 @@ class ModelDetailOut(ModelVersionOut):
     missing_card_fields: list[str] = []
 
 
+class ModelListItemOut(BaseModel):
+    """One row of the oversight/history list (GET /models): a submission plus a
+    summary of its latest run — verdict, the gated capability metric, and, when a
+    run could not evaluate the model, the infra-failure reason (so a submission
+    that failed to load is not silently 'pending' with no visible cause)."""
+
+    id: str  # model_version_id
+    model_id: str
+    name: str
+    model_class: ModelClass
+    version: str
+    framework: str
+    status: ModelStatus
+    submitted_at: datetime
+    submitted_by: str
+    latest_verdict: Verdict | None = None
+    evaluated_at: datetime | None = None
+    infra_ok: bool = True
+    infra_error: str | None = None  # surfaced from the latest run when infra_ok is false
+    headline_metric: str | None = None  # the capability gate metric, e.g. coco_ap_50_95
+    headline_value: float | None = None
+
+
 class TierResultOut(BaseModel):
     tier: Tier
     condition: Condition | None = None

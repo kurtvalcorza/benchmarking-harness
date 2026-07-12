@@ -44,6 +44,26 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /models:
+    get:
+      summary: List model submissions the caller may read, with a latest-run summary
+      description: >-
+        Oversight / evaluation-history list. Object scope (security-boundary.md):
+        auditor sees all; submitter own; adjudicator flagged; governance none
+        (empty list). Each item summarizes the version's latest run — verdict, the
+        gated capability metric, and an infra-failure reason when a run could not
+        evaluate the model — so a submission is never silently stuck at "pending".
+        Newest submission first.
+      x-required-roles: [submitter, adjudicator, auditor]
+      responses:
+        '200':
+          description: Model submissions the caller is authorized to see, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ModelListItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       summary: Submit a bounded model artifact and create a durable evaluation intent
       x-required-roles: [submitter]
@@ -340,6 +360,33 @@ components:
             missing_card_fields:
               type: array
               items: { type: string }
+
+    ModelListItem:
+      type: object
+      description: >-
+        One row of GET /models: a submission plus a summary of its latest run.
+        infra_error carries the reason a run could not evaluate the model (e.g.
+        weights that failed to load); headline_metric/value carry the gated
+        capability metric when one was scored.
+      required: [id, model_id, name, model_class, version, framework, status, submitted_at, submitted_by, infra_ok]
+      properties:
+        id: { type: string, format: uuid }
+        model_id: { type: string, format: uuid }
+        name: { type: string }
+        model_class: { $ref: '#/components/schemas/ModelClass' }
+        version: { type: string }
+        framework: { type: string }
+        status: { $ref: '#/components/schemas/ModelStatus' }
+        submitted_at: { type: string, format: date-time }
+        submitted_by: { type: string }
+        latest_verdict:
+          allOf: [ { $ref: '#/components/schemas/Verdict' } ]
+          nullable: true  # null until a run completes (incl. the infra-failure case)
+        evaluated_at: { type: string, format: date-time, nullable: true }
+        infra_ok: { type: boolean }
+        infra_error: { type: string, nullable: true }
+        headline_metric: { type: string, nullable: true }
+        headline_value: { type: number, nullable: true }
 
     GoldenSetRef:
       type: object

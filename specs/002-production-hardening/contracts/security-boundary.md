@@ -31,6 +31,7 @@ Raw tokens and token payloads are not persisted. Display/email claims are non-au
 |---|:---:|:---:|:---:|:---:|
 | Submit model | yes | optional if multi-role | no | no |
 | Read own model/card/history | yes | no | related flagged cases | all |
+| List model submissions (oversight/history) | own | no | flagged cases | all |
 | Read arbitrary run evidence | no | affected registrations | related flagged cases | all |
 | Register Golden Test Set | no | yes | no | no |
 | Read Golden Set + its re-evaluation status | no | own registrations | no | all |

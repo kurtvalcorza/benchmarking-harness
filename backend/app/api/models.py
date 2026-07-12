@@ -20,10 +20,18 @@ from app.api.schemas import (
     EvaluationRunOut,
     GoldenSetRef,
     ModelDetailOut,
+    ModelListItemOut,
     ModelVersionOut,
 )
-from app.db.enums import JobReason, ModelClass, Role
-from app.db.models import ArtifactReceipt, EvaluationRun, Model, ModelCard, ModelVersion
+from app.db.enums import JobReason, ModelClass, Role, Tier
+from app.db.models import (
+    ArtifactReceipt,
+    EvaluationRun,
+    Model,
+    ModelCard,
+    ModelVersion,
+    TierResult,
+)
 from app.db.repositories import get_session
 from app.services import audit, jobs, orchestrator
 from app.services.artifact_ingest import (
@@ -239,6 +247,88 @@ def _resolve_version(session: Session, id_: str) -> ModelVersion:
         if versions:
             return max(versions, key=lambda v: v.submitted_at)
     raise HTTPException(404, "model not found")
+
+
+@router.get("/models", response_model=list[ModelListItemOut])
+def list_models(
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(
+        require_roles(Role.submitter, Role.adjudicator, Role.auditor)
+    ),
+) -> list[ModelListItemOut]:
+    """Oversight/history list of the submissions the caller may read. A token
+    lacking every read role (e.g. governance-only) is denied 403 here, matching
+    the contract's x-required-roles; the surviving roles are then object-scoped
+    (security-boundary.md): auditor→all, submitter→own, adjudicator→flagged. Each
+    row summarizes the version's
+    latest run — verdict, the gated capability metric, and an infra-failure reason
+    when a run could not evaluate the model — so a submission that failed to load
+    is not silently 'pending' with no visible cause. Newest submission first.
+    """
+    versions = list(session.exec(select(ModelVersion)).all())
+    allowed = set(authorized_version_ids(principal, versions, session))
+    versions = [v for v in versions if v.id in allowed]
+    if not versions:
+        return []
+
+    models = {m.id: m for m in session.exec(select(Model)).all()}
+    version_ids = [v.id for v in versions]
+
+    latest_run: dict[str, EvaluationRun] = {}
+    for r in session.exec(
+        select(EvaluationRun).where(EvaluationRun.model_version_id.in_(version_ids))  # type: ignore[attr-defined]
+    ).all():
+        prev = latest_run.get(r.model_version_id)
+        if prev is None or r.started_at > prev.started_at:
+            latest_run[r.model_version_id] = r
+
+    capability: dict[str, TierResult] = {}
+    run_ids = [r.id for r in latest_run.values()]
+    if run_ids:
+        for tr in session.exec(
+            select(TierResult).where(
+                TierResult.run_id.in_(run_ids),  # type: ignore[attr-defined]
+                TierResult.tier == Tier.capability,
+            )
+        ).all():
+            capability.setdefault(tr.run_id, tr)
+
+    items: list[ModelListItemOut] = []
+    for v in versions:
+        model = models[v.model_id]
+        run = latest_run.get(v.id)
+        metric = value = None
+        infra_error = None
+        if run is not None:
+            if not run.infra_ok:
+                # the load/sandbox failure that left the model un-evaluated (FR-012)
+                infra_error = run.flag_trigger
+            cap = capability.get(run.id)
+            if cap and cap.threshold:
+                metric = cap.threshold.get("metric")
+                raw = cap.metrics.get(metric) if (metric and cap.metrics) else None
+                value = float(raw) if isinstance(raw, (int, float)) else None
+        items.append(
+            ModelListItemOut(
+                id=v.id,
+                model_id=v.model_id,
+                name=model.name,
+                model_class=model.model_class,
+                version=v.version,
+                framework=v.framework,
+                status=v.status,
+                submitted_at=v.submitted_at,
+                submitted_by=v.submitted_by,
+                latest_verdict=run.verdict if run else None,
+                evaluated_at=run.finished_at if run else None,
+                infra_ok=run.infra_ok if run else True,
+                infra_error=infra_error,
+                headline_metric=metric,
+                headline_value=value,
+            )
+        )
+    items.sort(key=lambda i: i.submitted_at, reverse=True)
+    return items
 
 
 @router.get("/models/{id}", response_model=ModelDetailOut)
