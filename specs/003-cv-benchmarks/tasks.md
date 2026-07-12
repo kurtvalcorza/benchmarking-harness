@@ -21,10 +21,11 @@ These are captured for traceability; each is already merged or in review.
 - [x] T003 [US2] Frontend Models/history page + nav + `client.listModels()` surfacing status, verdict, gated metric, and infra-failure reason — `frontend/src/pages/ModelsList.tsx`, `main.tsx`, `api/client.ts` (PR #10 `9647d75`)
 - [~] T004 [US3] PyTorch adapter loads Ultralytics YOLO classification checkpoints (try `YOLO()` first, fall back to `torch.load`; `is_yolo`; `_predict_cls` YOLO `.probs` path; clear state_dict rejection; fail loud on empty class names) in `backend/engine/adapters/pytorch_adapter.py` + unit tests — **PR #11, IN REVIEW; must merge to `main` before US4 implementation so this branch inherits the loader**
 
-## Phase 0 — Design for US4 (before code)
+## Phase 0 — Design for US4 (before code) — ✅ DONE (this artifact set)
 
-- [ ] T010 [US4] `plan.md` + `research.md`: choose the permissively licensed segmentation data source (masks), the mIoU definition (semantic, per-class + mean), and the mask representation (RLE/polygon) — Constitution II/licensing recorded
-- [ ] T011 [US4] `data-model.md` + `contracts/inference-adapter.md` delta: the mask channel on `Prediction`, the segmentation annotation shape, and the `SegmentationEvidence`/coverage record
+- [x] T010 [US4] `plan.md` + `research.md`: data source = Open Images V7 `-seg` (CC-BY, R2), mIoU = dataset-wide per-class pixel IoU (R1), mask representation = COCO RLE via pycocotools (R3), deterministic instance→semantic reduction (R4)
+- [x] T011 [US4] `data-model.md` + `contracts/{segmentation-metric,inference-adapter}.md`: the `Prediction.mask` channel, segmentation annotation shape, per-class IoU floors, and content-addressed mask evidence
+- [x] T012 [US4] `quickstart.md` + `checklists/requirements.md` (Spec Kit parity with 002)
 
 ## Phase 1 — Tests first (US4, observed failing before impl — FR-209)
 
