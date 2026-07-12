@@ -19,11 +19,23 @@ pycocotools is dependency-light (C/NumPy), so this scorer runs in CI and tests
 without the heavy `ml` runtime.
 """
 
+import math
 from collections import defaultdict
 
 import numpy as np
 
 from engine.adapters.base import Prediction
+
+
+def _safe_score(inst: dict) -> float:
+    """A finite confidence for reduction ordering. A missing / non-numeric /
+    non-finite `score` never crashes the reduction sort (coverage flags the bad
+    payload separately) — it just sorts last at 0.0."""
+    try:
+        s = float(inst.get("score", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+    return s if math.isfinite(s) else 0.0
 
 
 def _counts_to_bytes(rle: dict) -> dict:
@@ -106,9 +118,12 @@ def reduce_instances_to_semantic(
     (cross-class overlap → higher score wins); same-class instances union.
     Order-independent for identical inputs (SC-004).
     """
+    # a structurally invalid instance (non-dict, non-numeric score) is flagged
+    # by coverage and must not crash scoring — drop it before ordering.
+    instances = [inst for inst in instances if isinstance(inst, dict)]
     order = sorted(
         range(len(instances)),
-        key=lambda i: (-float(instances[i].get("score", 0.0)), i),
+        key=lambda i: (-_safe_score(instances[i]), i),
     )
     claimed = np.zeros(size, dtype=bool)
     per_class: dict[str, np.ndarray] = {}
@@ -172,7 +187,9 @@ def evaluate_segmentation(
 
     for image_id, objs in annotations.items():
         pred = by_id.get(image_id)
-        pred_instances = list(pred.masks) if pred else []
+        # keep only structurally-usable instances (dicts); a malformed entry
+        # (e.g. a bare string) is coverage-flagged and must not crash scoring.
+        pred_instances = [m for m in (pred.masks if pred else []) if isinstance(m, dict)]
         num_predictions += len(pred_instances)
         size = _image_size(objs, pred_instances)
         if size is None:

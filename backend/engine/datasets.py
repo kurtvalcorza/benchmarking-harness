@@ -69,6 +69,26 @@ class DatasetNotFound(FileNotFoundError):
     pass
 
 
+def _image_dims(root: Path) -> dict[str, tuple[int, int]]:
+    """image_id → (H, W) read from the actual image files, for cross-checking a
+    segmentation golden set's declared mask sizes against reality."""
+    from PIL import Image as PILImage
+
+    dims: dict[str, tuple[int, int]] = {}
+    img_dir = root / "images"
+    if not img_dir.is_dir():
+        return dims
+    for p in sorted(img_dir.iterdir()):
+        if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
+        try:
+            with PILImage.open(p) as im:
+                dims[p.stem] = (im.height, im.width)
+        except Exception:  # noqa: BLE001 — an unreadable image is reported elsewhere
+            continue
+    return dims
+
+
 def _valid_mask_rle(rle) -> bool:
     """A COCO RLE mask that decodes at its declared size (FR-219). Structural +
     a pycocotools decode so a garbage `counts` is rejected, not just a missing
@@ -114,6 +134,10 @@ def validate_dataset(root: Path, *, require_masks: bool = False) -> list[str]:
         return [f"annotations.json is not valid JSON: {e}"]
     if not isinstance(ann, dict):
         return ["annotations.json must map image id → list of objects"]
+    # for segmentation, a GT mask's declared (H, W) must match the actual image;
+    # otherwise coverage derives the wrong canvas from GT and flags every real
+    # model mask as mask_dim_mismatch (FR-219).
+    image_dims = _image_dims(root) if require_masks else {}
     for img_id, objs in ann.items():
         if not isinstance(objs, list):
             problems.append(f"annotations[{img_id!r}] must be a list")
@@ -129,11 +153,22 @@ def validate_dataset(root: Path, *, require_masks: bool = False) -> list[str]:
                 and all(isinstance(v, (int, float)) for v in bbox)
             ):
                 problems.append(f"annotations[{img_id!r}][{i}].bbox must be [x1,y1,x2,y2]")
-            if require_masks and not _valid_mask_rle(obj.get("rle")):
-                problems.append(
-                    f"annotations[{img_id!r}][{i}] needs a valid segmentation mask "
-                    "'rle' {size:[h,w], counts} — a bbox cannot stand in for a mask (FR-219)"
-                )
+            if require_masks:
+                rle = obj.get("rle")
+                if not _valid_mask_rle(rle):
+                    problems.append(
+                        f"annotations[{img_id!r}][{i}] needs a valid segmentation mask "
+                        "'rle' {size:[h,w], counts} — a bbox cannot stand in for a mask (FR-219)"
+                    )
+                else:
+                    expected = image_dims.get(img_id)
+                    size = rle.get("size")
+                    if expected is not None and (int(size[0]), int(size[1])) != expected:
+                        problems.append(
+                            f"annotations[{img_id!r}][{i}] mask size {[int(size[0]), int(size[1])]} "
+                            f"!= image dimensions {list(expected)} (H,W) — mIoU would score on "
+                            "the wrong canvas (FR-219)"
+                        )
     ds = Dataset(root=root)
     image_ids = {img.id for img in ds.images()} if (root / "images").is_dir() else set()
     if not image_ids:

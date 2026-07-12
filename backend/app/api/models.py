@@ -44,7 +44,11 @@ from app.services.artifact_ingest import (
 )
 from app.services.auth import Principal
 from app.services.config import load_config
-from engine.adapters.base import SUPPORTED_FRAMEWORKS
+from engine.adapters.base import (
+    FRAMEWORK_CLASS_SUPPORT,
+    SUPPORTED_FRAMEWORKS,
+    framework_supports_class,
+)
 from engine.datasets import REPO_ROOT
 from engine.metrics import SCORED_CLASSES
 from engine.registry.registry import REGISTRY
@@ -85,6 +89,16 @@ async def submit_model(
     if framework.lower() not in SUPPORTED_FRAMEWORKS:
         raise HTTPException(
             422, f"unsupported framework '{framework}' (supported: {SUPPORTED_FRAMEWORKS})"
+        )
+    if not framework_supports_class(framework, mc):
+        # supported framework, but this adapter has no runner for this class
+        # (e.g. segmentation+onnx): refuse now instead of storing the version
+        # and infra-failing at load.
+        ok_fw = sorted(fw for fw, classes in FRAMEWORK_CLASS_SUPPORT.items() if mc in classes)
+        raise HTTPException(
+            422,
+            f"framework '{framework.lower()}' has no runner for model class '{mc.value}' "
+            f"(supported for this class: {ok_fw})",
         )
 
     model = session.exec(

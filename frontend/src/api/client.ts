@@ -83,9 +83,16 @@ export interface EvaluationRun {
 }
 
 export interface SafetyRow {
-  recall: number | null
+  // metric-typed safety floor (FR-214): `metric` names the per-class metric
+  // ("recall" for detection/classification, "iou" for segmentation) and
+  // `value` is its measured value. `recall`/`iou` are also present as
+  // metric-named keys for back-compat; read `value` for display.
+  metric: string
+  value: number | null
   floor: number | null
   ok: boolean
+  recall?: number | null
+  iou?: number | null
 }
 
 export interface GroundingEvidence {
