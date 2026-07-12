@@ -379,7 +379,9 @@ components:
         status: { $ref: '#/components/schemas/ModelStatus' }
         submitted_at: { type: string, format: date-time }
         submitted_by: { type: string }
-        latest_verdict: { $ref: '#/components/schemas/Verdict' }
+        latest_verdict:
+          allOf: [ { $ref: '#/components/schemas/Verdict' } ]
+          nullable: true  # null until a run completes (incl. the infra-failure case)
         evaluated_at: { type: string, format: date-time, nullable: true }
         infra_ok: { type: boolean }
         infra_error: { type: string, nullable: true }

@@ -25,6 +25,13 @@ def test_models_list_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_models_list_denies_role_without_read_scope(client):
+    """A valid token lacking every read role (e.g. governance-only) is authorized
+    with 403 — not silently handed an empty 200 — matching x-required-roles."""
+    r = client.get("/models", headers=bearer("gov", ["governance"]))
+    assert r.status_code == 403
+
+
 def test_models_list_returns_submission_with_verdict_and_metric(client):
     register_golden(client, det_manifest())
     submit_model(client, weights_path=HEALTHY_DET, name="healthy-detector")

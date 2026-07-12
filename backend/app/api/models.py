@@ -252,11 +252,15 @@ def _resolve_version(session: Session, id_: str) -> ModelVersion:
 @router.get("/models", response_model=list[ModelListItemOut])
 def list_models(
     session: Session = Depends(get_session),
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(
+        require_roles(Role.submitter, Role.adjudicator, Role.auditor)
+    ),
 ) -> list[ModelListItemOut]:
-    """Oversight/history list of the submissions the caller may read (object
-    scope, security-boundary.md): auditor→all, submitter→own, adjudicator→flagged
-    (governance holds no arbitrary model read). Each row summarizes the version's
+    """Oversight/history list of the submissions the caller may read. A token
+    lacking every read role (e.g. governance-only) is denied 403 here, matching
+    the contract's x-required-roles; the surviving roles are then object-scoped
+    (security-boundary.md): auditor→all, submitter→own, adjudicator→flagged. Each
+    row summarizes the version's
     latest run — verdict, the gated capability metric, and an infra-failure reason
     when a run could not evaluate the model — so a submission that failed to load
     is not silently 'pending' with no visible cause. Newest submission first.
