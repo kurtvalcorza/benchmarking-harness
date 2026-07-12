@@ -51,6 +51,15 @@ One entry per emitted detection:
 - Emits no attribution → grounding is `unavailable(missing_attribution)` (the pre-004
   behavior, unchanged — FR-306).
 
+## Tier scoping (FR-306a — review finding #1)
+
+- The extractor MUST run **only in Tier 3**. `run_inference` is tier-agnostic, so an `explain:
+  bool = False` parameter MUST be threaded through it to the adapter predict path; Tier 1 and
+  Tier 2 call with the default (`explain=False` → no attribution, no extractor cost), and only
+  Tier 3 passes `explain=True`.
+- `HARNESS_GROUNDING_EXPLAINER` selects *which* extractor Tier 3 uses; it MUST NOT by itself
+  cause attribution to run in any tier.
+
 ## Determinism (FR-302, SC-004)
 
 - D-RISE's mask stream is seeded from `weights_digest + image_id` (+ optional
@@ -59,11 +68,15 @@ One entry per emitted detection:
   evidence digest.
 - Grad-CAM has no RNG; deterministic given fixed weights/inputs.
 
-## Timing (FR-308)
+## Timing (FR-308 — review finding #2)
 
 - The **clean** detection pass is the sole source of `latency_ms_per_image`,
-  `throughput_images_per_s`, and `edge_deployable`. The explain phase runs **separately and
-  untimed**; its cost MUST NOT appear in the resource profile.
+  `throughput_images_per_s`, and `edge_deployable`.
+- Because attribution is produced inside the timed `predict()`, the `explain=True` path MUST
+  time the clean forward and the extractor **separately** and report both as distinct
+  `JobResult.timing` keys — `predict_s` (clean) and `explain_s` (extractor). `run_tier3` MUST
+  derive the resource profile from `predict_s` **only**; `explain_s` MUST NOT appear in it.
+- For `explain=False`, the clean-pass timing MUST be byte-for-byte unchanged from today.
 
 ## Budget (FR-309)
 
@@ -76,8 +89,11 @@ One entry per emitted detection:
 - `metrics.canonicalize()` MUST remap each attribution entry's `label` via a `label_map`
   (as it does for `labels`/`masks`); a non-dict/invalid entry passes through unchanged.
 - The Tier-3 grounding path MUST evaluate over **canonicalized** attributions (not raw
-  predictions), using **the Tier-3-resolved benchmark dataset's own `manifest.label_map`**
-  (`dataset.manifest.get("label_map")`), the same seam Tier 1 uses (`tier1_capability.py:55`).
+  predictions), mirroring Tier 1's two-step sequence (`tier1_capability.py:53-55`):
+  `[Prediction.from_dict(p) for p in job.predictions]` **then**
+  `canonicalize(preds, dataset.manifest.get("label_map") or {})`. The `from_dict` step is
+  required because `canonicalize()` takes `list[Prediction]` while `job.predictions` is raw
+  `list[dict]` (review finding #4).
 - The `label_map` MUST come from that benchmark dataset (`resolve(get_benchmark(model_class).dataset)`),
   **not** the Tier-2 Golden Set — Tier 3 scores a different dataset, so the Golden Set's
   `label_map` would map against the wrong vocabulary and reintroduce the false-fail. No
@@ -88,6 +104,18 @@ One entry per emitted detection:
 - The measured tier result + Model Card MUST record the extractor (`drise`/`gradcam`), its
   version and params, the evaluator `method`/`evaluator_version`/`sample_count`, and the
   resolvable `evidence_ref`/`evidence_digest`.
+
+## Method semantics + docstring (review findings #5, #6)
+
+- **#5 (FR-316):** the two evaluator methods define `sample_count` differently —
+  `_pointing_game` counts GT target boxes, `_energy_inside_region` counts attribution entries —
+  yet share `grounding_min_samples`. The default (`pointing_game` first) is unaffected; if
+  `energy_inside_region` is ever configured primary, the min-samples semantics MUST be
+  documented or the evaluator aligned to count targets.
+- **#6:** `Prediction.attribution`'s dataclass docstring (`base.py:48-52`) currently describes
+  attribution as *either* `{label, point}` *or* `{label, energy_inside}`; FR-303 emits the
+  **combined** `{label, point, energy_inside}`. The docstring MUST be updated when FR-303 lands
+  (the evaluator already tolerates both shapes).
 
 ## Invariants
 

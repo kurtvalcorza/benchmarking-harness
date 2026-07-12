@@ -26,8 +26,16 @@ current spec set; `[ ]` = to confirm during/at implementation.
 ## Determinism, timing, budget
 
 - [x] D-RISE determinism is specified (seed from `weights_digest + image_id`, independent of global RNG) → reproducible evidence (research R5, FR-302)
-- [x] The explain phase is untimed so the resource profile stays honest (research R3, FR-308)
 - [x] The extractor is bounded to `grounding_min_samples` targets and logs the cap — no silent truncation (research R6, FR-309)
+
+## Explain seam + timing (post-merge review — the two HIGH findings)
+
+- [x] The extractor is scoped to **Tier 3 only** via an `explain: bool = False` seam through `run_inference`; Tier 1/2 never pay the cost (FR-306a, research R8, review #1)
+- [x] FR-308 has a concrete seam: `predict_s`/`explain_s` split in `JobResult.timing`; `run_tier3` uses `predict_s` only; `explain=False` unchanged (FR-308, research R3, review #2)
+- [x] FR-305 mirrors Tier 1's `from_dict → canonicalize` sequence, so `canonicalize()` runs on `list[Prediction]` not `list[dict]` (FR-305, review #4)
+- [x] FR-303 reworded — energy is retained evidence; `evaluate_grounding` is first-applicable so `pointing_game` scores under the default (FR-303, review #3)
+- [x] `energy_inside_region` vs `pointing_game` `sample_count` divergence documented (FR-316, review #5); `Prediction.attribution` docstring update tasked (T145, review #6)
+- [ ] Phase-1 tests T116 (Tier-1/2 non-invocation) + T113 (timing split) assert the two HIGH fixes
 
 ## Constitution compliance
 
