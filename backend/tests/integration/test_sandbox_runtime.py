@@ -89,3 +89,45 @@ def test_output_mount_is_writable(tmp_path):
     probe = "open('/mnt/out/probe.txt', 'w').write('ok'); print('WROTE_OUT')"
     _code, logs = _probe(client, tmp_path, ["python", "-c", probe])
     assert "WROTE_OUT" in logs
+
+
+def test_segmentation_model_loads_and_emits_masks_in_sandbox(tmp_path, monkeypatch):
+    """T023 [US4] — a real Ultralytics -seg checkpoint loads and emits RLE masks
+    through the no-egress docker sandbox (the real pytorch/-seg path, like the
+    detection/classification live checks).
+
+    Skipped unless a Docker host + the sandbox image are present AND
+    HARNESS_TEST_SEG_WEIGHTS points at a real yolov8n-seg.pt. CI (no daemon)
+    skips; a docker host with weights exercises the live mask path end-to-end.
+    """
+    import os
+    from pathlib import Path
+
+    pytest.importorskip("ultralytics")
+    _client_or_skip()  # requires a docker daemon + the sandbox image
+    weights = os.environ.get("HARNESS_TEST_SEG_WEIGHTS")
+    if not weights or not Path(weights).exists():
+        pytest.skip("set HARNESS_TEST_SEG_WEIGHTS to a real yolov8n-seg.pt to run the live seg probe (T023)")
+
+    samples = Path(__file__).resolve().parents[2].parent / "samples"
+    seg_bench = samples / "benchmarks" / "segmentation-sample"
+    # allowlist the weights dir + samples so the runner's path containment (T072)
+    # permits this out-of-repo checkpoint for the probe
+    monkeypatch.setenv(
+        "HARNESS_DATA_ROOTS", f"{Path(weights).resolve().parent},{samples},{samples.parent / 'data'}"
+    )
+    monkeypatch.setenv("HARNESS_SANDBOX_MODE", "docker")
+
+    from engine.sandbox.runner import run_inference
+
+    job = run_inference(
+        framework="pytorch",
+        artifact=str(Path(weights).resolve()),
+        model_class="segmentation",
+        dataset_root=str(seg_bench),
+    )
+    assert job.adapter_error is None, job.adapter_error
+    masked = [p for p in job.predictions if p.get("masks")]
+    assert masked, "the -seg model emitted no masks inside the sandbox"
+    rle = masked[0]["masks"][0]["rle"]
+    assert set(rle) >= {"size", "counts"} and len(rle["size"]) == 2

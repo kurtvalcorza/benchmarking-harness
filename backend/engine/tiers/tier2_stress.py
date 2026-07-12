@@ -28,6 +28,9 @@ class Tier2Result:
     worst_case_drop: dict | None = None
     adapter_error: str | None = None
     unratified: bool = False
+    # metric the per-class safety floor is checked against: "recall" for
+    # detection/classification, "iou" for segmentation (FR-214)
+    safety_metric: str = "recall"
 
     @property
     def passed(self) -> bool | None:
@@ -57,6 +60,13 @@ def run_tier2(
     ordered = [Condition.clean] + [c for c in conditions if c is not Condition.clean]
     primary = threshold.metric if threshold else None
     clean_score: float | None = None
+    # segmentation reports per-class IoU, not recall — check the safety floor
+    # against the class's own metric (FR-214)
+    if model_class is ModelClass.segmentation:
+        per_class_key, metric_name = "per_class_iou", "iou"
+    else:
+        per_class_key, metric_name = "per_class_recall", "recall"
+    result.safety_metric = metric_name
 
     # perturbed copies must be daemon-visible when the sandbox runs via a host
     # docker daemon — same workdir contract as engine.sandbox.runner
@@ -83,8 +93,12 @@ def run_tier2(
             preds = metrics_mod.canonicalize(preds, label_map or {})
             coverage = metrics_mod.compute_coverage(preds, annotations).to_dict()
             m = metrics_mod.evaluate(model_class, preds, annotations)
-            per_class, breach = metrics_mod.safety_critical_recall(
-                m, safety_classes, recall_floors
+            # segmentation returns reduced per-class masks → content-addressed
+            # evidence, out of the metrics column (FR-218)
+            seg_masks = m.pop("reduced_masks", None)
+            per_class, breach = metrics_mod.safety_critical_floors(
+                m, safety_classes, recall_floors,
+                per_class_key=per_class_key, metric_name=metric_name,
             )
             m["safety_critical"] = per_class  # FR-009: never aggregate-only
             result.safety_breach = result.safety_breach or breach
@@ -108,7 +122,11 @@ def run_tier2(
                     unratified=unratified,
                     coverage=coverage,
                     evaluator=evaluator,
-                    evidence={"sandbox_mode": job.sandbox_mode, "timing": job.timing},
+                    evidence={
+                        "sandbox_mode": job.sandbox_mode,
+                        "timing": job.timing,
+                        **({"segmentation_masks": seg_masks} if seg_masks is not None else {}),
+                    },
                 )
             )
             if primary and m.get(primary) is not None:

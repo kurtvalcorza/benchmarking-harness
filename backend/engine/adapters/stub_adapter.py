@@ -85,6 +85,8 @@ class StubAdapter:
             quality = self._quality(model, img.path)
             if model.model_class is ModelClass.classification:
                 preds.append(self._predict_cls(model, img, gt, quality))
+            elif model.model_class is ModelClass.segmentation:
+                preds.append(self._predict_seg(model, img, gt, quality))
             else:
                 preds.append(self._predict_det(model, img, gt, quality))
         return preds
@@ -125,6 +127,31 @@ class StubAdapter:
         return Prediction(
             image_id=img.id, boxes=boxes, scores=scores, labels=labels, attribution=attribution
         )
+
+    def _predict_seg(self, model: StubModel, img: Image, gt: list[dict], quality: float) -> Prediction:
+        """Deterministic per-instance masks from ground truth (hash-seeded hit/
+        miss like detection), so the REAL mIoU scorer runs, degradation under
+        perturbation is real, and identical inputs reproduce identical masks
+        (SC-004). Emits the GT RLE for each hit instance; a miss omits it (an
+        empty mask that lowers IoU — complete accounting)."""
+        emit = model.spec.get("emit_labels", {})  # emulate a foreign vocabulary (F6)
+        masks = []
+        for i, obj in enumerate(gt):
+            rle = obj.get("rle")
+            if not rle:  # a non-segmentation annotation carries no mask to emit
+                continue
+            label = obj["label"]
+            p_hit = self._skill_for(model, label) * quality
+            roll = _unit_hash(model.weights_digest, img.id, str(i), label)
+            if roll < p_hit:
+                masks.append(
+                    {
+                        "label": emit.get(label, label),
+                        "score": round(0.5 + 0.5 * p_hit * (1 - roll / 2), 4),
+                        "rle": rle,
+                    }
+                )
+        return Prediction(image_id=img.id, masks=masks)
 
     def _predict_cls(self, model: StubModel, img: Image, gt: list[dict], quality: float) -> Prediction:
         true_label = gt[0]["label"] if gt else "unknown"

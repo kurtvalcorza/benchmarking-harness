@@ -111,11 +111,16 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
         )
         sc = (tr.get("metrics") or {}).get("safety_critical") or {}
         for cls, row in sc.items():
+            # metric-typed: recall for detection/classification, IoU for
+            # segmentation (FR-214). Fall back to the recall key for older rows.
+            metric = row.get("metric", "recall")
+            value = row.get("value", row.get("recall"))
             safety_rows.append(
                 {
                     "cls": cls,
                     "condition": tr.get("condition") or "—",
-                    "recall": _tbc(row.get("recall")),
+                    "metric": metric,
+                    "value": _tbc(value),
                     "floor": _tbc(row.get("floor")),
                     "ok": "yes" if row.get("ok") else "**NO**",
                 }
@@ -129,8 +134,12 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
         if row["ok"] != "yes":
             limitations.append(
                 f"Safety-critical class `{row['cls']}` under `{row['condition']}`: "
-                f"recall {row['recall']} vs floor {row['floor']}."
+                f"{row['metric']} {row['value']} vs floor {row['floor']}."
             )
+    # the safety table header names the metric these rows are measured against
+    _METRIC_LABELS = {"recall": "Recall", "iou": "IoU"}
+    _metric = safety_rows[0]["metric"] if safety_rows else "recall"
+    safety_metric_label = _METRIC_LABELS.get(_metric, _metric.title())
     if not limitations:
         limitations = [TBC]
 
@@ -182,6 +191,7 @@ def generate(inputs: CardInputs, existing_card: str | None = None) -> tuple[str,
         golden_set_checksum=track("golden_set.checksum", gs.get("checksum")),
         tier_rows=tier_rows,
         safety_rows=safety_rows,
+        safety_metric_label=safety_metric_label,
         worst_case_drop=worst_case_drop,
         limitations=limitations,
         framework=track("framework", inputs.framework),

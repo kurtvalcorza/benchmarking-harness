@@ -104,12 +104,13 @@ def test_upload_filename_cannot_escape_artifact_dir(client, tmp_path):
 
 
 def test_scorerless_registered_class_is_422_up_front(client):
-    """Registered classes without a POC scorer (e.g. segmentation) are refused
-    at submission with a clear message, not mid-run as an infra failure."""
+    """Registered classes without a POC scorer (e.g. pose — detection,
+    classification and segmentation are all scored now) are refused at submission
+    with a clear message, not mid-run as an infra failure (FR-025)."""
     with open(HEALTHY_DET, "rb") as f:
         r = client.post(
             "/models",
-            data={"name": "seg", "model_class": "segmentation", "framework": "stub"},
+            data={"name": "pose", "model_class": "pose", "framework": "stub"},
             files={"weights": ("w.json", f)},
         )
     assert r.status_code == 422

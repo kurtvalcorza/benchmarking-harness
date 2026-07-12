@@ -7,6 +7,7 @@ from engine.adapters.base import Prediction
 from engine.metrics.classification import evaluate_classification
 from engine.metrics.coverage import compute_coverage
 from engine.metrics.detection import evaluate_detection
+from engine.metrics.segmentation import evaluate_segmentation
 
 __all__ = [
     "SCORED_CLASSES",
@@ -15,12 +16,13 @@ __all__ = [
     "evaluate",
     "evaluator_provenance",
     "safety_critical_recall",
+    "safety_critical_floors",
     "compute_coverage",  # re-exported for the tier scorers
 ]
 
 # Classes with an implemented scorer. The submission API refuses the other
 # registered classes up front (clear 422) instead of infra-failing mid-run.
-SCORED_CLASSES = {ModelClass.detection, ModelClass.classification}
+SCORED_CLASSES = {ModelClass.detection, ModelClass.classification, ModelClass.segmentation}
 
 # Versioned metric contract identifier stamped into evaluator provenance (T036).
 METRIC_CONTRACT = "harness-metrics/1"
@@ -47,6 +49,15 @@ _EVALUATORS: dict[ModelClass, dict] = {
         "metric_contract": METRIC_CONTRACT,
         "configuration": {"topk": [1, 5], "averaging": "macro", "missing_is_incorrect": True},
     },
+    ModelClass.segmentation: {
+        "name": "segmentation-miou",
+        "metric_contract": METRIC_CONTRACT,
+        "configuration": {
+            "metric": "miou",
+            "reduction": "confidence-priority",
+            "mask": "coco-rle",
+        },
+    },
 }
 
 
@@ -63,9 +74,10 @@ def evaluator_provenance(model_class: ModelClass, *, harness_version: str) -> di
             "version": harness_version,
         }
     configuration = dict(base["configuration"])
-    if model_class is ModelClass.detection:
-        # record the PINNED reference-evaluator version so a COCO number is
-        # reproducible against the exact implementation that produced it
+    if model_class in (ModelClass.detection, ModelClass.segmentation):
+        # record the PINNED reference-library version so a COCO-AP / mIoU number
+        # is reproducible against the exact pycocotools that produced it (both the
+        # detection evaluator and the segmentation RLE encode/decode depend on it)
         configuration["reference_version"] = _pycocotools_version()
     return {**base, "configuration": configuration, "version": harness_version}
 
@@ -100,6 +112,11 @@ def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> li
         for k, v in p.class_scores.items():
             key = label_map.get(k, k)
             merged_scores[key] = merged_scores.get(key, 0.0) + v
+        # segmentation masks carry a per-instance label too: remap it, never drop
+        # the mask channel when rebuilding the Prediction (FR-215)
+        remapped_masks = [
+            {**m, "label": label_map.get(m.get("label"), m.get("label"))} for m in p.masks
+        ]
         out.append(
             Prediction(
                 image_id=p.image_id,
@@ -108,6 +125,7 @@ def canonicalize(predictions: list[Prediction], label_map: dict[str, str]) -> li
                 labels=[label_map.get(lbl, lbl) for lbl in p.labels],
                 label=label_map.get(p.label, p.label) if p.label else p.label,
                 class_scores=merged_scores,
+                masks=remapped_masks,
                 extra=p.extra,
             )
         )
@@ -123,29 +141,52 @@ def evaluate(
         return evaluate_detection(predictions, annotations)
     if model_class is ModelClass.classification:
         return evaluate_classification(predictions, annotations)
+    if model_class is ModelClass.segmentation:
+        return evaluate_segmentation(predictions, annotations)
     raise NotImplementedError(
         f"metrics for '{model_class.value}' land with its stand-in dataset (FR-025); "
         "the registry entry exists, the scorer is the remaining slot"
     )
 
 
-def safety_critical_recall(
-    metrics: dict, safety_classes: list[str], recall_floors: dict[str, float]
+def safety_critical_floors(
+    metrics: dict,
+    safety_classes: list[str],
+    floors: dict[str, float],
+    *,
+    per_class_key: str,
+    metric_name: str,
 ) -> tuple[dict[str, dict], bool]:
-    """Extract per-class recall for the manifest's safety-critical classes and
-    check each against its floor (FR-009, FR-012a, FR-026).
+    """Metric-typed per-class safety-floor check (FR-009/012a/026/214).
 
-    Returns ({class: {recall, floor, ok}}, any_breach). A safety class absent
-    from the results counts as a breach (recall unmeasurable ≠ passing).
+    Reads the class's per-class metric (`per_class_recall` for detection/
+    classification, `per_class_iou` for segmentation) and checks each safety
+    class against its floor. Returns ({class: row}, any_breach); a safety class
+    absent from the results counts as a breach (unmeasurable ≠ passing).
+
+    Each row carries the generic `{metric, value, floor, ok}` AND the
+    metric-named key (`recall`/`iou`) so both the metric-typed card path and the
+    detection/classification back-compat readers work.
     """
-    per_class = metrics.get("per_class_recall", {})
+    per_class = metrics.get(per_class_key, {})
     out: dict[str, dict] = {}
     breach = False
     for cls in safety_classes:
-        floor = recall_floors.get(cls)
-        recall = per_class.get(cls)
-        ok = recall is not None and floor is not None and recall >= floor
+        floor = floors.get(cls)
+        value = per_class.get(cls)
+        ok = value is not None and floor is not None and value >= floor
         if not ok:
             breach = True
-        out[cls] = {"recall": recall, "floor": floor, "ok": ok}
+        out[cls] = {"metric": metric_name, "value": value, "floor": floor, "ok": ok, metric_name: value}
     return out, breach
+
+
+def safety_critical_recall(
+    metrics: dict, safety_classes: list[str], recall_floors: dict[str, float]
+) -> tuple[dict[str, dict], bool]:
+    """Detection/classification safety gate: per-class recall against its floor.
+    A thin wrapper over :func:`safety_critical_floors` retained so existing
+    callers/tests are unchanged."""
+    return safety_critical_floors(
+        metrics, safety_classes, recall_floors, per_class_key="per_class_recall", metric_name="recall"
+    )

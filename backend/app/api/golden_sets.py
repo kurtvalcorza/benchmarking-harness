@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import get_principal, get_request_id, require_roles
 from app.api.schemas import GoldenSetManifestIn, GoldenSetOut, GoldenSetStatusOut
-from app.db.enums import Role
+from app.db.enums import ModelClass, Role
 from app.db.models import EvaluationRun, GoldenTestSet, ReevaluationClaim
 from app.db.repositories import get_session
 from app.services import audit
@@ -45,18 +45,25 @@ def register_golden_set(
             f"license '{manifest.license}' is not owned/permissive; the harness only "
             f"registers license-clean data (Constitution II). Accepted: {sorted(PERMISSIVE_LICENSES)}",
         )
-    missing_floors = [c for c in manifest.safety_critical if c not in manifest.recall_floors]
+    # segmentation reports IoU, not recall → a segmentation golden set declares
+    # per-class IoU floors; detection/classification keep recall floors (FR-214).
+    is_segmentation = manifest.model_class is ModelClass.segmentation
+    floors = manifest.iou_floors if is_segmentation else manifest.recall_floors
+    floor_metric = "IoU" if is_segmentation else "recall"
+
+    missing_floors = [c for c in manifest.safety_critical if c not in floors]
     if missing_floors:
         raise HTTPException(
             422,
-            f"every safety-critical class needs a recall floor (FR-026); missing: {missing_floors}",
+            f"every safety-critical class needs a {floor_metric} floor (FR-026/FR-214); "
+            f"missing: {missing_floors}",
         )
-    bad_floors = {c: f for c, f in manifest.recall_floors.items() if not 0.0 <= f <= 1.0}
+    bad_floors = {c: f for c, f in floors.items() if not 0.0 <= f <= 1.0}
     if bad_floors:
         # a floor outside [0,1] silently disarms (or hard-wires) the safety
-        # gate — e.g. floor=-1 makes recall 0.0 "pass" (FR-026/FR-012a)
+        # gate — e.g. floor=-1 makes a 0.0 metric "pass" (FR-026/FR-012a)
         raise HTTPException(
-            422, f"recall floors must be within [0, 1] (they are recalls): {bad_floors}"
+            422, f"{floor_metric} floors must be within [0, 1]: {bad_floors}"
         )
     dup = session.exec(
         select(GoldenTestSet).where(
@@ -87,7 +94,10 @@ def register_golden_set(
             f"data_ref '{manifest.data_ref}' does not resolve beneath a configured data "
             f"root {[str(p) for p in cfg.data_roots]} (path containment, T020a)",
         )
-    problems = validate_dataset(data_path)
+    # a segmentation golden set MUST carry masks (FR-219): a detection/
+    # classification-shaped dataset (label + optional bbox, no rle) cannot
+    # register as segmentation — bbox IoU can't stand in for mask IoU.
+    problems = validate_dataset(data_path, require_masks=is_segmentation)
     if problems:
         raise HTTPException(
             422, f"data_ref '{manifest.data_ref}' is not a conforming dataset: {problems}"
@@ -111,7 +121,10 @@ def register_golden_set(
         checksum=checksum,
         conditions=[c.value for c in manifest.conditions],
         safety_critical_classes=manifest.safety_critical,
-        recall_floors=manifest.recall_floors,
+        # the recall_floors column is the GENERIC per-class safety-floor store:
+        # recall floors for detection/classification, IoU floors for segmentation
+        # (interpreted by Tier 2 against the class metric; no migration, FR-214)
+        recall_floors=floors,
         label_map=manifest.label_map,
         license=manifest.license,
         is_public=False,
@@ -149,6 +162,7 @@ def register_golden_set(
         conditions=gs.conditions,
         safety_critical_classes=gs.safety_critical_classes,
         recall_floors=gs.recall_floors,
+        floor_metric="iou" if is_segmentation else "recall",
         reevaluation_flagged=flagged,
     )
 

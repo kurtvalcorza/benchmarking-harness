@@ -56,6 +56,10 @@ def run_tier1(*, framework: str, artifact: str, model_class: ModelClass, thresho
     # US2: account for every expected item BEFORE scoring, so omission can't inflate
     coverage = metrics_mod.compute_coverage(preds, dataset.annotations).to_dict()
     m = metrics_mod.evaluate(model_class, preds, dataset.annotations)
+    # segmentation returns the reduced per-class masks; move them OUT of the
+    # metrics column into tier evidence so the orchestrator persists them as
+    # content-addressed mask evidence (FR-218), never as raw bytes in metrics
+    seg_masks = m.pop("reduced_masks", None)
     m["benchmark"] = bench.reference
     m["dataset"] = bench.dataset
     passed, thr_dict, unratified = check_threshold(m, threshold)
@@ -81,6 +85,7 @@ def run_tier1(*, framework: str, artifact: str, model_class: ModelClass, thresho
             "timing": job.timing,
             "descriptor": job.descriptor,
             "num_predictions": len(preds),
+            **({"segmentation_masks": seg_masks} if seg_masks is not None else {}),
         },
     )
 

@@ -100,6 +100,28 @@ class PyTorchAdapter:
                             f"checkpoint; got a bare '{type(obj).__name__}' with no "
                             "model architecture (e.g. a state_dict)"
                         )
+            elif model_class is ModelClass.segmentation:
+                # Ultralytics -seg checkpoint (yolov8n-seg et al.): YOLO-first
+                # like detection/classification, then require task == 'segment'.
+                yolo = _try_load_yolo(artifact_ref)
+                if yolo is None:
+                    raise AdapterError(
+                        "segmentation weights must be an Ultralytics YOLO segmentation "
+                        "checkpoint (yolov8n-seg et al.); could not load the artifact as one"
+                    )
+                if yolo.task != "segment":
+                    raise AdapterError(
+                        f"Ultralytics checkpoint has task '{yolo.task}', not a segmentation "
+                        "model; submit it under its actual model class"
+                    )
+                net = yolo
+                names = dict(yolo.names) if getattr(yolo, "names", None) else {}
+                if not names:
+                    raise AdapterError(
+                        "Ultralytics segmentation checkpoint exposes no class names; "
+                        "cannot map predictions to a label space"
+                    )
+                is_yolo = True
             else:
                 raise AdapterError(
                     f"pytorch adapter has no runner for model class '{model_class.value}' in the POC"
@@ -120,6 +142,8 @@ class PyTorchAdapter:
         try:
             if model.task is ModelClass.detection:
                 return [self._predict_det(model, img) for img in images]
+            if model.task is ModelClass.segmentation:
+                return [self._predict_seg(model, img) for img in images]
             return [self._predict_cls(model, img) for img in images]
         except AdapterError:
             raise
@@ -135,6 +159,35 @@ class PyTorchAdapter:
             scores.append(float(b.conf[0]))
             labels.append(model.class_names.get(int(b.cls[0]), str(int(b.cls[0]))))
         return Prediction(image_id=img.id, boxes=boxes, scores=scores, labels=labels)
+
+    def _predict_seg(self, model: TorchModel, img: Image) -> Prediction:
+        """Ultralytics segmentation: emit one per-instance COCO-RLE mask (+ class
+        + confidence) per detected instance, at the ORIGINAL image resolution
+        (retina_masks), for the mIoU scorer to reduce (contracts/inference-adapter.md)."""
+        import numpy as np
+
+        from engine.metrics.segmentation import rle_encode
+
+        # retina_masks=True → masks returned at the original image resolution, so
+        # the RLE `size` matches the dataset image dimensions (no dim mismatch)
+        r = model.net.predict(img.path, retina_masks=True, verbose=False)[0]
+        masks: list[dict] = []
+        if r.masks is None:  # no instances detected → empty mask set (lowers IoU)
+            return Prediction(image_id=img.id, masks=masks)
+        data = r.masks.data  # tensor [N, H, W], 0/1 at orig resolution
+        boxes = r.boxes
+        for i in range(data.shape[0]):
+            binary = (data[i].cpu().numpy() > 0.5).astype(np.uint8)
+            cls_id = int(boxes.cls[i]) if boxes is not None else 0
+            score = float(boxes.conf[i]) if boxes is not None else 1.0
+            masks.append(
+                {
+                    "label": model.class_names.get(cls_id, str(cls_id)),
+                    "score": score,
+                    "rle": rle_encode(binary),
+                }
+            )
+        return Prediction(image_id=img.id, masks=masks)
 
     def _predict_cls(self, model: TorchModel, img: Image) -> Prediction:
         if model.is_yolo:

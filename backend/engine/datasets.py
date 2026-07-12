@@ -69,11 +69,41 @@ class DatasetNotFound(FileNotFoundError):
     pass
 
 
-def validate_dataset(root: Path) -> list[str]:
+def _valid_mask_rle(rle) -> bool:
+    """A COCO RLE mask that decodes at its declared size (FR-219). Structural +
+    a pycocotools decode so a garbage `counts` is rejected, not just a missing
+    key."""
+    if not isinstance(rle, dict):
+        return False
+    size = rle.get("size")
+    counts = rle.get("counts")
+    if not (isinstance(size, (list, tuple)) and len(size) == 2):
+        return False
+    try:
+        h, w = int(size[0]), int(size[1])
+    except (TypeError, ValueError):
+        return False
+    if h <= 0 or w <= 0 or not isinstance(counts, (str, bytes)) or not counts:
+        return False
+    try:
+        from pycocotools import mask as coco_mask
+
+        cb = counts.encode("ascii") if isinstance(counts, str) else counts
+        decoded = coco_mask.decode({"size": [h, w], "counts": cb})
+    except Exception:  # noqa: BLE001 — any decode failure = not a valid mask
+        return False
+    return getattr(decoded, "shape", None) == (h, w)
+
+
+def validate_dataset(root: Path, *, require_masks: bool = False) -> list[str]:
     """Structural validation for a dataset dir (used at golden-set
     registration, FR-020): returns human-readable problems, empty when
     conforming. Catching malformed data HERE keeps a bad registration from
-    crashing every later evaluation of its class."""
+    crashing every later evaluation of its class.
+
+    `require_masks` (segmentation golden sets, FR-219): every annotation object
+    MUST carry a valid COCO-RLE `rle`, so a detection/classification-shaped
+    dataset (label + optional bbox, no masks) cannot register as segmentation."""
     problems: list[str] = []
     ann_path = root / "annotations.json"
     if not ann_path.exists():
@@ -99,6 +129,11 @@ def validate_dataset(root: Path) -> list[str]:
                 and all(isinstance(v, (int, float)) for v in bbox)
             ):
                 problems.append(f"annotations[{img_id!r}][{i}].bbox must be [x1,y1,x2,y2]")
+            if require_masks and not _valid_mask_rle(obj.get("rle")):
+                problems.append(
+                    f"annotations[{img_id!r}][{i}] needs a valid segmentation mask "
+                    "'rle' {size:[h,w], counts} — a bbox cannot stand in for a mask (FR-219)"
+                )
     ds = Dataset(root=root)
     image_ids = {img.id for img in ds.images()} if (root / "images").is_dir() else set()
     if not image_ids:

@@ -56,6 +56,22 @@ DEFAULTS = {
         "recall_floors": {"animal": 0.6},
         "label_map": {},
     },
+    "segmentation": {
+        "name": "seg-golden",
+        "data": REPO / "samples" / "golden" / "seg-golden",
+        "safety_critical": ["pedestrian"],
+        # segmentation declares per-class IoU floors, not recall floors (FR-214)
+        "iou_floors": {"pedestrian": 0.4},
+        # F6: a COCO-vocabulary -seg model scores against the canonical labels
+        "label_map": {
+            "person": "pedestrian",
+            "car": "vehicle",
+            "truck": "vehicle",
+            "bus": "vehicle",
+            "stop sign": "traffic_sign",
+            "traffic light": "traffic_sign",
+        },
+    },
 }
 
 
@@ -94,7 +110,8 @@ def main() -> int:
         "checksum": "auto",
         "conditions": ["rain", "low_light", "fog"],
         "safety_critical": cfg["safety_critical"],
-        "recall_floors": cfg["recall_floors"],
+        "recall_floors": cfg.get("recall_floors", {}),
+        "iou_floors": cfg.get("iou_floors", {}),
         "license": args.license_ or "owned",
         "is_public": False,
         "domain": "local-context-demo",
