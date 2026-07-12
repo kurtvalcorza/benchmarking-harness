@@ -134,7 +134,8 @@ backend/engine/adapters/base.py                # (attribution channel already ex
 backend/engine/metrics/__init__.py             # canonicalize() remaps attribution labels (FR-305)
 backend/engine/tiers/tier3_ops.py              # canonicalize attributions via dataset.manifest.label_map
                                                #   (mirrors tier1:55); exclude explain time from profile (FR-305/308/309)
-#   (no orchestrator.py change — Tier 3 uses the benchmark dataset it already resolves, not the Golden Set)
+                                               #   NOTE: no orchestrator.py change — Tier 3 uses the benchmark
+                                               #   dataset it already resolves, not the Golden Set
 backend/app/services/config.py                 # HARNESS_GROUNDING_EXPLAINER / DRISE_* config (FR-312)
 backend/engine/cards/generator.py + template   # surface the grounding method/provenance (FR-311)
 backend/tests/unit/test_grounding_drise.py     # NEW (FR-313)
