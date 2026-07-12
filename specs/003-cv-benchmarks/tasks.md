@@ -36,10 +36,14 @@ These are captured for traceability; each is already merged or in review.
 ## Phase 2 — Prediction + scorer (US4)
 
 - [ ] T030 [US4] Add the mask channel to `Prediction` (+ `to_dict`/`from_dict`) in `backend/engine/adapters/base.py` (FR-201)
+- [ ] T030a [US4] Preserve the mask channel through `engine/metrics/__init__.py::canonicalize()` (it currently rebuilds `Prediction` without new fields → masks dropped before scoring) (FR-215)
+- [ ] T030b [US4] Define + implement the deterministic instance→semantic reduction (same-class union, cross-class overlap by confidence, fixed ordering) in `engine/metrics/segmentation.py`; documented in `plan.md` (FR-217)
 - [ ] T031 [US4] `engine/metrics/segmentation.py`: `evaluate_segmentation()` → `miou` + per-class IoU with complete-coverage accounting (FR-202)
 - [ ] T032 [US4] Dispatch `segmentation` in `engine/metrics/__init__.py::evaluate()` (remove `NotImplementedError`) (FR-203)
 - [ ] T032a [US4] Add `segmentation` to `engine.metrics.SCORED_CLASSES` and accept it in the `app/api/models.py` submission guard; update the scorerless-class contract test — otherwise segmentation uploads 422 before scoring (FR-213)
 - [ ] T033 [US4] Coverage + evaluator provenance for masks (US2 evidence rules) in `engine/metrics/coverage.py` / scorer (FR-208)
+- [ ] T033a [US4] Typed validation of malformed mask payloads (bad RLE counts, out-of-range polygons, mask/image dimension mismatch) in the coverage layer (FR-216)
+- [ ] T033b [US4] Persist mask predictions as content-addressed evidence (Tier persistence stores only metadata today) so mask evidence is resolvable + reproducible (FR-218)
 
 ## Phase 3 — Adapter (US4)
 
@@ -50,7 +54,8 @@ These are captured for traceability; each is already merged or in review.
 
 - [ ] T050 [US4] `scripts/fetch_*`: fetch a permissive segmentation slice (masks) into gitignored `data/` + an owned synthetic sample under `samples/` (FR-205)
 - [ ] T051 [US4] Golden-set registration accepts segmentation mask annotations + optional per-class IoU floors (FR-206)
-- [ ] T051a [US4] Generalize the Tier-2 per-class safety-floor path from recall-only to IoU: registration schema/storage for IoU floors + the `engine/tiers/tier2_stress.py` floor check reads per-class IoU for segmentation (today `recall_floors`/`per_class_recall` only) (FR-214)
+- [ ] T051a [US4] Generalize the Tier-2 per-class safety-floor path from recall-only to IoU: registration schema/storage for IoU floors + the `engine/tiers/tier2_stress.py` floor check reads per-class IoU for segmentation (today `recall_floors`/`per_class_recall` only), AND the recall-named downstream verdict paths (`FlagInput.safety_recall_breach` / `safety_critical_recall_below_floor` flag trigger + Model Card wording) report an IoU breach as such (FR-214)
+- [ ] T051b [US4] Golden-set registration REJECTS a segmentation dataset lacking valid masks (the validator today only requires `label` + optional `bbox`) so a detection/classification-shaped dataset cannot register as segmentation (FR-219)
 - [ ] T052 [US4] `backend/thresholds.yaml`: `segmentation.capability`/`domain_stress` `miou` thresholds (unratified until governance) (FR-207)
 - [ ] T053 [US4] Model Card surfaces `miou` + per-class IoU (FR-210)
 
