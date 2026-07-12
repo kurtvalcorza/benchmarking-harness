@@ -92,17 +92,44 @@ New environment configuration (FR-312), read by `app/services/config.py`:
 Reused unchanged: `HARNESS_GROUNDING_METHODS` (`pointing_game`, `energy_inside_region`),
 `HARNESS_GROUNDING_MIN_SAMPLES` (`20`).
 
+## `run_inference` / `JobResult.timing` — explain seam + timing split (not schema)
+
+The explain seam touches the full execution path, not just `run_inference` (review #1/#2 +
+2nd-round follow-up):
+
+| Element | Change |
+|---|---|
+| `run_inference(..., explain: bool = False)` | new param (`runner.py`); forwarded to **both** legs — the `spec` dict → `job.py`, and the T073 HTTP round-trip. Tier 1/2 use the default, **only** Tier 3 passes `explain=True` (FR-306a) |
+| T073 HTTP leg — **client + server** | `runner_client.run_remote()` sends `explain` in the body **and** `backend/runner/main.py` `RunRequest` (`:49-53`) gains `explain: bool = False` + `POST /run` (`:76-90`) forwards it; else Pydantic drops it and Tier-3 attribution silently no-ops under `HARNESS_RUNNER_URL` |
+| `InferenceAdapter.explain(model, images, preds)` | **optional** member of the `Protocol` (`base.py:105`); `job.py` invokes via `getattr(adapter, "explain", None)`. pytorch + stub implement it; ONNX/others unchanged |
+| `engine/sandbox/job.py::run(spec)` | reads `spec["explain"]`; after the timed clean `predict()` runs a **separately-timed** `explain()`; builds `predict_s`/`explain_s` |
+| `JobResult.timing["predict_s"]` | the **clean** forward time (unchanged for `explain=False`) — the sole source of `latency_ms_per_image`/`throughput`/`edge_deployable` |
+| `JobResult.timing["explain_s"]` | the extractor time, present only when `explain=True`; **not** folded into the resource profile (FR-308) |
+
+No persisted schema change — these are transient `JobResult` fields on the sandbox boundary.
+
+## Method-vs-sample_count note (FR-316, review finding #5)
+
+`GroundingEvidence.sample_count` is defined differently by the two evaluator methods:
+`_pointing_game` → GT target boxes; `_energy_inside_region` → attribution entries. Both gate
+on `grounding_min_samples`. Under the default (`pointing_game` first) this is immaterial; if
+`energy_inside_region` is configured primary, the min-samples bar changes meaning. Documented,
+not changed, for this feature.
+
 ## Canonicalization (the F6 fix — FR-305)
 
 `metrics.canonicalize()` today rebuilds `Prediction` remapping `labels`, `label`,
 `class_scores`, and `masks` — **but not `attribution`**. It is extended to remap each
 attribution entry's `label` via the `label_map` (non-dict/invalid entries pass through
 unchanged, consistent with the mask-channel rule). `tier3_ops.run_tier3` — whose
-`_grounding_evidence` today reads **raw** `job.predictions` — canonicalizes the attributions
-using **the benchmark dataset's own `manifest.label_map`** (`dataset.manifest.get("label_map")`,
-the same seam Tier 1 uses at `tier1_capability.py:55`), on the dataset it already resolves at
-`tier3_ops.py:61`. Result: a `person` attribution point inside a `pedestrian` box counts as a
-hit under that dataset's `label_map {person: pedestrian}`.
+`_grounding_evidence` today reads **raw** `job.predictions` — canonicalizes the attributions by
+**mirroring Tier 1's two-step sequence** (`tier1_capability.py:53-55`):
+`[Prediction.from_dict(p) for p in job.predictions]` **then**
+`canonicalize(preds, dataset.manifest.get("label_map") or {})`, on the dataset it already
+resolves at `tier3_ops.py:61`. The `from_dict` step is required — `canonicalize()` takes
+`list[Prediction]`, `job.predictions` is `list[dict]` (review finding #4). Result: a `person`
+attribution point inside a `pedestrian` box counts as a hit under that dataset's
+`label_map {person: pedestrian}`.
 
 **Seam (not the Golden Set):** Tier 3 scores against the **registry stand-in benchmark**
 (`resolve(get_benchmark(model_class).dataset)`), not the Tier-2 Golden Set, so the `label_map`

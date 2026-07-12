@@ -41,35 +41,88 @@ D-RISE procedure, per image:
 
 ## R2. Where the extractor plugs in
 
-**Decision**: Extend `PyTorchAdapter._predict_det` with an opt-in **explain** step (default
-on for detection). After the normal detections are collected, if the explainer is enabled
-the adapter runs the configured extractor and appends one
-`{label, point, energy_inside}` per detection to the existing `Prediction.attribution`
-channel. No `Prediction` envelope change — the channel already exists (002 US5).
+**Decision**: Add a separate `PyTorchAdapter.explain(model, images, preds)` step (an optional
+`InferenceAdapter` protocol method — see R3/R8) that runs the configured extractor and appends
+one `{label, point, energy_inside}` per detection to the existing `Prediction.attribution`
+channel. It is invoked by `job.py` **only when `explain=True`** (Tier 3), separately from and
+after the clean `predict()`. No `Prediction` envelope change — the channel already exists
+(002 US5). *(Earlier drafts put the extractor inside `_predict_det`; the second-round review
+showed that welds it into the shared, single-timed predict path — R3/R8 move it to a separate
+`explain()` step so it stays Tier-3-only and separately timed.)*
 
 **Rationale**: The attribution channel and its `to_dict`/`from_dict`, the sandbox
 serialization boundary, the `GroundingEvidence` evaluator, and the content-addressed
 evidence store are all already built for the stub; the real path only needs to *fill* the
-channel. Minimal surface, maximal reuse.
+channel — now via `explain()` rather than inside `predict()`. Minimal surface, maximal reuse.
 
-**Alternatives**: a separate "explain" sandbox job/entrypoint (more sandbox invocations,
-more orchestration) — deferred; the in-adapter explain step with two-phase timing (R3) keeps
-one job.
+**Alternatives**: keeping attribution inside `predict()` (welds it into every tier's timed
+inference — rejected, R3/R8); a separate "explain" sandbox job/entrypoint (an extra sandbox
+spin-up + model reload) — rejected: the `explain()` step inside the same `job.py` run reuses
+the loaded model and keeps one job.
 
-## R3. Timing separation — clean timed, explain untimed
+## R3. Timing separation — clean timed, explain untimed (concrete seam)
 
 **Decision**: Keep the **clean** detection pass as the sole source of
-`latency_ms_per_image`/`throughput`/`edge_deployable` (as today), and run the explain step in
-a **separate, untimed** phase. The adapter times only the clean forward; explain time is
-reported under a distinct key that Tier 3 does **not** fold into the resource profile.
+`latency_ms_per_image`/`throughput`/`edge_deployable`, and make the explain step **timed
+separately** via a dedicated `adapter.explain()` call. **Pinned mechanism (second-round
+review):** rather than change `predict()`'s return type to carry timing, `job.py::run(spec)`
+runs the timed clean `predict()` (→ `predict_s`, unchanged) and, when `spec["explain"]`, a
+**separately-timed `adapter.explain(model, images, preds)`** (→ `explain_s`) that attaches
+attribution to the predictions. `InferenceAdapter` is a `typing.Protocol` (`base.py:105`,
+no default method bodies), so `explain()` is an **optional** member: `job.py` invokes it via
+`getattr(adapter, "explain", None)` and skips when absent. Only the pytorch adapter (D-RISE/
+Grad-CAM) and the stub (its synthetic attribution, moved out of `predict()`) implement it; ONNX
+and any other adapter need no change. `run_tier3` derives the resource profile from `predict_s`
+only.
 
 **Rationale**: D-RISE adds `N` forward passes per image; folding that into latency would
 wreck the edge-deployability signal and misrepresent the model. The resource profile must
-describe the *model*, not the *explainer* (FR-308).
+describe the *model*, not the *explainer* (FR-308). **Review correction (#2):** the earlier
+"runs separately and untimed" phrasing had no implementable seam — today `run_inference`
+wraps the *whole* `predict()` in one `timing` block (`tier3_ops.py:76-88`), and attribution
+(FR-301) is produced inside that call, so it would be counted. A concrete clean-vs-explain
+**split** inside the timing block is the seam; it is a change to the `run_inference`/adapter
+timing contract (not `orchestrator.py`), and for `explain=False` the clean-pass timing stays
+byte-for-byte as today.
 
-**Alternatives**: single-job split timing (adapter reports a clean-vs-explain split and Tier 3
-uses only the clean split) — viable but couples the timing contract more tightly; the
-two-phase separation is simpler and keeps the clean-pass timing byte-for-byte as today.
+**Alternatives**: two separate `run_inference` calls in Tier 3 (one clean+timed, one
+explain+untimed) — doubles sandbox spin-up + model load for no benefit; the single
+`explain=True` call reusing the loaded model with split timing is cheaper and keeps the
+clean detections and the attributions consistent.
+
+## R8. Explainer scoped to Tier 3 via an `explain` seam (review finding #1)
+
+**Decision**: Thread an `explain: bool = False` parameter through `run_inference` and **down
+its full execution path** — not just the tier call-sites. `run_inference` (`runner.py:140`)
+fans out to two legs, both of which must carry `explain` (second-round review): (a) the
+serialized `spec` dict into `engine/sandbox/job.py::run(spec)` (subprocess/docker), which is
+where `adapter.predict()` actually runs (`job.py:107`) and where `predict_s`/
+`latency_ms_per_image` are built (`job.py:118-123`); and (b) the HTTP round-trip to the
+dedicated runner service (the T073 path, when `HARNESS_RUNNER_URL` is set). The HTTP leg has a
+**client and a server**, both of which must carry `explain` (third-round review): the client
+`app/services/runner_client.py::run_remote()` sends it in the body, **and** the server
+`backend/runner/main.py` must accept it — `RunRequest` (`main.py:49-53`) gains
+`explain: bool = False` and `POST /run` (`main.py:76-90`) forwards it to its local
+`run_inference(...)`. If the server side is missed, Pydantic silently drops the extra body field
+and Tier-3 attribution **silently no-ops under `HARNESS_RUNNER_URL`** — a silent failure, worse
+than the loud in-process one. Tier 1 and Tier 2 call with the default (no attribution, no
+extractor cost); **only Tier 3** calls `explain=True`. The global `HARNESS_GROUNDING_EXPLAINER`
+selects *which* extractor Tier 3 uses (`drise`/`gradcam`/`none`); it does **not** by itself cause
+attribution to run.
+
+**Rationale**: `run_inference` is tier-agnostic — the identical call is made in all three
+tiers (`tier1_capability.py:39`, `tier2_stress.py:82`, `tier3_ops.py:62`) over one shared
+adapter `predict()`, and attribution is consumed **only** by Tier 3's `_grounding_evidence`.
+Gating the extractor on the global toggle alone would run D-RISE's ~`N` passes/image on every
+Tier-1 inference and every Tier-2 perturbation condition (Tier 2 loops conditions), i.e. the
+most expensive op in the harness running 3×+ with its output discarded in two tiers. The
+`explain` seam is the minimal change that confines the cost to where the evidence is used.
+It also composes cleanly with R3 (the same `explain=True` path is where clean-vs-explain
+timing splits).
+
+**Alternatives**: a per-tier config flag (leaks tier identity into config, still needs the
+seam); detecting "am I Tier 3?" inside the adapter (adapter must stay tier-agnostic) — both
+rejected in favor of an explicit `explain` argument on the call `run_tier3` already makes.
 
 ## R4. Attribution label canonicalization (F6) — the correctness fix
 
@@ -77,9 +130,13 @@ two-phase separation is simpler and keeps the clean-pass timing byte-for-byte as
 benchmark dataset's own `manifest.label_map`** **before** grounding is evaluated.
 `metrics.canonicalize()` is extended to remap the `attribution` channel's labels (mirroring
 the existing `labels`/`masks` remap), and `tier3_ops.run_tier3` canonicalizes the attributions
-using `dataset.manifest.get("label_map")` — **the exact seam Tier 1 uses**
-(`tier1_capability.py:55`: `canonicalize(preds, dataset.manifest.get("label_map") or {})`)
-— on the dataset it already resolves at `tier3_ops.py:61`, before `_grounding_evidence` scores.
+by **mirroring Tier 1's exact two-step sequence** (`tier1_capability.py:53-55`):
+`preds = [Prediction.from_dict(p) for p in job.predictions]` **then**
+`canonicalize(preds, dataset.manifest.get("label_map") or {})` — on the dataset it already
+resolves at `tier3_ops.py:61`, before `_grounding_evidence` scores. The `from_dict` step is
+required (review finding #4): `canonicalize()` takes `list[Prediction]` while `job.predictions`
+is raw `list[dict]`, so calling it on the dicts directly would `AttributeError`; the attribution
+channel round-trips through `from_dict`/`to_dict` (`base.py:65,79`).
 
 **Rationale**: pointing_game matches `attribution.label == gt.label`, and GT is in the
 canonical dataset vocabulary (`pedestrian`/`vehicle`) while a real COCO detector emits

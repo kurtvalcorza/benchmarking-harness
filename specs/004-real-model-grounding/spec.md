@@ -171,10 +171,13 @@ excluded from timing; and the run explains only enough images to reach
 
 1. **Given** the explainer is on, **When** Tier 3 records timing, **Then**
    `latency_ms_per_image`/`throughput`/`edge_deployable` reflect the **clean** inference
-   only, not the explain phase.
+   only, not the explain phase (clean-vs-explain timing split).
 2. **Given** a golden set larger than needed, **When** grounding runs, **Then** it
    explains images only until `grounding_min_samples` targets are reached and **logs**
    the cap (no silent truncation).
+3. **Given** the explainer is `drise`, **When** Tier 1 and Tier 2 run inference, **Then**
+   no attribution is produced and no explain cost is incurred (`explain=False` by default);
+   attribution is requested only by Tier 3 (`explain=True`) — review finding #1.
 
 ---
 
@@ -212,7 +215,14 @@ attributable and reproducible; P2.
 - **FR-303** (US1) The adapter MUST emit **both** `point` (the saliency-map peak, in
   original-image pixel coordinates — the pointing-game input) **and** `energy_inside`
   (the fraction of saliency energy inside the detection box, in `[0,1]` — the
-  energy-inside-region input) per detection, so both approved methods are usable.
+  energy-inside-region input) per detection, so **either** approved method can score the
+  evidence. **Clarification (per review):** `evaluate_grounding` selects the
+  **first-applicable** method from `HARNESS_GROUNDING_METHODS` (default
+  `("pointing_game", "energy_inside_region")`), so once every entry carries a `point`,
+  `pointing_game` always applies and scores; `energy_inside` is then **retained,
+  reproducible evidence** that `energy_inside_region` scores only when it is configured
+  first or when points are absent. FR-303 does **not** claim both methods score
+  simultaneously — it guarantees both are *feedable* from one saliency map.
 - **FR-304** (US1) An attribution `point` MUST be in the **original-image pixel frame**
   (the same coordinate space as the XYXY boxes the grounding evaluator compares against).
 - **FR-305** (US2) Attribution labels MUST be **canonicalized through the Tier-3-resolved
@@ -222,13 +232,39 @@ attributable and reproducible; P2.
   using `dataset.manifest.get("label_map")` — the **same benchmark dataset it already
   resolves** at `tier3_ops.py:61` and the **same seam Tier 1 uses** (`tier1_capability.py:55`)
   — before `_grounding_evidence` scores them (today Tier 3 evaluates raw `job.predictions`
-  with no canonicalization). The `label_map` MUST come from that benchmark dataset's manifest,
-  **not** the Tier-2 Golden Set (which scores a different dataset); no `orchestrator.py`
-  change is required. Otherwise a foreign-vocabulary detector class-matches zero targets and
-  false-fails (F6).
+  with no canonicalization). The Tier-3 fix MUST mirror Tier 1's **exact sequence**
+  (`tier1_capability.py:53-55`): `preds = [Prediction.from_dict(p) for p in job.predictions]`
+  **then** `canonicalize(preds, dataset.manifest.get("label_map") or {})` — because
+  `metrics.canonicalize()` operates on `list[Prediction]`, while `job.predictions` is raw
+  `list[dict]`; calling `canonicalize()` on the dicts directly would raise `AttributeError`
+  (review finding #4). The attribution channel MUST survive `from_dict`/`to_dict`
+  (it already does, `base.py:65,79`). The `label_map` MUST come from that benchmark dataset's
+  manifest, **not** the Tier-2 Golden Set (which scores a different dataset); no
+  `orchestrator.py` change is required. Otherwise a foreign-vocabulary detector class-matches
+  zero targets and false-fails (F6).
 - **FR-306** (US1) The attribution extractor MUST run **on by default for detection**,
   selectable/disable via `HARNESS_GROUNDING_EXPLAINER` (`drise` | `gradcam` | `none`);
   `none` restores the prior `missing_attribution` behavior.
+- **FR-306a** (US1/US4) The extractor MUST run **only in Tier 3**, never in Tier 1 or
+  Tier 2 (review finding #1). Today `run_inference` is tier-agnostic — the identical call
+  is made in all three tiers (`tier1_capability.py:39`, `tier2_stress.py:82`,
+  `tier3_ops.py:62`) over one shared adapter `predict()` — and attribution is consumed
+  **only** by Tier 3's `_grounding_evidence`. Gating the explainer on the global
+  `HARNESS_GROUNDING_EXPLAINER` alone would run D-RISE's ~`N` passes/image on every Tier-1
+  inference and on every Tier-2 perturbation condition, discarding the output twice.
+  Therefore an explicit **explain seam** MUST be threaded so only Tier 3 requests
+  attribution: `run_inference(..., explain: bool = False)` (default off) forwarded down **the
+  whole execution path**, which has two legs (second-round review): the serialized `spec` dict
+  into `engine/sandbox/job.py::run(spec)` (subprocess/docker — where `adapter.predict()` runs,
+  `job.py:107`) **and** the HTTP call to the dedicated runner service. The HTTP leg has a
+  **client and a server**, both of which MUST carry `explain` (third-round review):
+  `app/services/runner_client.py::run_remote()` sends it in the body, **and**
+  `backend/runner/main.py` MUST accept it — `RunRequest` (`main.py:49-53`) gains
+  `explain: bool = False` and the `POST /run` handler (`main.py:76-90`) forwards it to its local
+  `run_inference(...)`. Otherwise Pydantic silently drops the unknown field and Tier-3
+  attribution **silently no-ops whenever `HARNESS_RUNNER_URL` is configured** (the T073
+  production profile — a silent empty-attribution failure, not a loud one). Tier 1/2 call with
+  the default (`explain=False` → no attribution, no cost), Tier 3 with `explain=True`.
 - **FR-307** (US3) A **Grad-CAM** extractor MUST be available as a selectable alternative
   (class-discriminative CAM over the detection head), producing the same
   `{label, point, energy_inside}` envelope; a binding failure on an unsupported
@@ -236,7 +272,21 @@ attributable and reproducible; P2.
 - **FR-308** (US4) The explain phase MUST NOT inflate the Tier-3 resource profile:
   `latency_ms_per_image`, `throughput_images_per_s`, and `edge_deployable` MUST reflect
   the **clean** inference pass only; grounding-extraction time is measured/excluded
-  separately.
+  separately. **Concrete seam + mechanism (review finding #2 + follow-up):** today `job.py`
+  times the whole `adapter.predict()` as one span (`job.py:105-110`) and builds
+  `predict_s`/`latency_ms_per_image` from it (`job.py:118-123`). The split MUST be done with a
+  **separate, separately-timed `explain()` adapter step** (not by changing `predict()`'s return
+  type): when `spec["explain"]` is set, `job.py` runs the timed clean `predict()`
+  (→ `predict_s`, unchanged) **then** a separately-timed `adapter.explain(model, images, preds)`
+  (→ `explain_s`) that attaches attribution. `run_tier3` MUST derive `latency_ms_per_image`/
+  `throughput`/`edge_deployable` from the **clean** `predict_s` only. `InferenceAdapter` is a
+  `typing.Protocol` (no default method bodies — `base.py:105`), so `explain()` is an **optional**
+  member and `job.py` MUST invoke it via `getattr(adapter, "explain", None)` — calling it when
+  present and `spec["explain"]`, skipping otherwise. Only the pytorch and stub adapters implement
+  `explain()`; ONNX and any other adapter need **no** change (the `getattr` guard is the no-op).
+  This touches the `run_inference`/`job.py`/`runner_client.py`/`backend/runner/main.py`/
+  `InferenceAdapter` contracts (not `orchestrator.py`); for `explain=False` every leg is
+  byte-for-byte as today.
 - **FR-309** (US4) The extractor MUST be **bounded**: explain only enough images to reach
   `grounding_min_samples` target instances, and MUST `log()` the cap so coverage is
   honest (no silent truncation).
@@ -253,15 +303,30 @@ attributable and reproducible; P2.
 - **FR-313** (US1–US4) Tests MUST be written first and observed failing (Constitution VI):
   saliency determinism; peak→point and energy-fraction math; a synthetic attend-right
   → pointing-game **hit** / attend-wrong → **miss** fixture; the FR-305 canonicalization
-  guard; and the FR-308 timing-exclusion assertion.
+  guard (incl. the `from_dict → canonicalize` sequence); the **FR-306a Tier-1/2 non-invocation**
+  assertion (no attribution/no explain cost when `explain=False`); and the FR-308
+  clean-vs-explain timing-split assertion (Tier-3 `latency_ms_per_image` unchanged with the
+  explainer on).
+- **FR-316** (US1, informational — review finding #5) The two approved methods define
+  `sample_count` differently: `_pointing_game` counts **GT target boxes**, while
+  `_energy_inside_region` counts **attribution entries** (`grounding.py:114-116` vs
+  `:130-133`), yet both gate on the same `grounding_min_samples`. When
+  `energy_inside_region` is the scoring method, `insufficient_samples` is cleared on the
+  volume of the model's own predictions, a weaker/differently-defined bar than target
+  coverage. The default (`pointing_game` first) is unaffected; if `energy_inside_region` is
+  ever configured as primary, the min-samples semantics MUST be documented (or the evaluator
+  aligned to count targets). No behavior change is mandated for the default in this feature.
 
 ### Invariants (unchanged, must hold)
 
 - **FR-314** Classification and segmentation grounding MUST remain
   `unavailable(unsupported_model_class)` (no localization target — fail-closed
-  unchanged). The **stub** grounding path, the ratified `grounding_score ≥ 0.30` gate,
-  the fail-closed routing, and all existing Tier-1/2/3 behavior MUST NOT regress; the
-  full backend suite + constitution gates stay green.
+  unchanged). The **stub** grounding *verdict/evidence* MUST NOT regress, the ratified
+  `grounding_score ≥ 0.30` gate, the fail-closed routing, and all existing Tier-1/2/3 behavior
+  MUST NOT regress; the full backend suite + constitution gates stay green. (Note: the stub's
+  synthetic attribution moves from `predict()` into the new `explain()` step, so it is now
+  produced only in Tier 3 with `explain=True` — the grounding result Tier 3 sees is identical;
+  only the emission point moves, consistent with FR-306a.)
 - **FR-315** (informational) A real model reaches Tier 3 only after clearing Tier 1
   (`coco_ap_50_95 ≥ 0.25`) and Tier 2. This feature ships the **measurement path**; a
   live end-to-end operational_safety pass additionally requires a real golden set where
