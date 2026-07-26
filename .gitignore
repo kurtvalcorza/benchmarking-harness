@@ -58,6 +58,9 @@ results/
 # Docker/Rancher Desktop on Windows — see specs/001 validation-local-hw.md F8)
 docker-compose.override.yml
 docker-compose.override.yaml
+# agent dev-server preview config: machine-specific ports and paths.
+# The managed .claude/skills/ are tracked; only this local config is not.
+.claude/launch.json
 
 # --- Node / frontend ---
 node_modules/
