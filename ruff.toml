@@ -1,0 +1,14 @@
+# Repo-root ruff config.
+#
+# WHY THIS EXISTS. CI runs `ruff check backend scripts` from the repo root. The
+# `backend/` tree is governed by backend/pyproject.toml ([tool.ruff]), but
+# `scripts/` had NO config above it, so ruff fell back to its BUILT-IN DEFAULT
+# rule set for those files. Those defaults are not stable across ruff releases:
+# the 0.4 -> 0.16.3 bump (ruff is installed unpinned via backend[dev]) started
+# enforcing rules this project never opted into (EXE001, RUF046, RUF100), which
+# turned CI red with no source change. See the `backend` job in .github/workflows/ci.yml.
+#
+# `extend` inherits the ONE rule set defined in backend/pyproject.toml, so the
+# whole tree — scripts/ included — is linted by the rules the project actually
+# chose (select = E, F, I, UP, B), with a single source of truth and no drift.
+extend = "backend/pyproject.toml"

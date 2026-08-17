@@ -83,6 +83,8 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -e "backend[dev]"
+      - name: "Patch build tooling in the audited env (setuptools >= 83, PYSEC-2026-3447)"
+        run: python -m pip install -U "setuptools>=83"
       - name: "OpenAPI contract validates"
         run: python -m openapi_spec_validator specs/002-production-hardening/contracts/openapi.yaml
       - name: "pip-audit (advisories require a documented exception)"
