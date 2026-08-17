@@ -77,7 +77,6 @@ def _seg_objects(sample, w: int, h: int) -> list[dict]:
     it into a full-image canvas and RLE-encode (research.md R3). No raw image
     pixels are embedded (Constitution II)."""
     import numpy as np
-
     from engine.metrics.segmentation import rle_encode
 
     field = sample.ground_truth or getattr(sample, "segmentations", None)
